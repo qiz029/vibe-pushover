@@ -86,10 +86,10 @@ func setupCommand(options Options) *cli.Command {
 func installCommand(options Options) *cli.Command {
 	return &cli.Command{
 		Name:  "install",
-		Usage: "install completion and approval hooks for a local agent",
+		Usage: "install notification hooks or an extension for a local agent",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "agent", Usage: "agent to configure: codex or claude", Required: true},
-			&cli.StringFlag{Name: "agent-config", Usage: "override the agent config path"},
+			&cli.StringFlag{Name: "agent", Usage: "agent to configure: codex, claude, or pi", Required: true},
+			&cli.StringFlag{Name: "agent-config", Usage: "override the agent hook or extension path"},
 			&cli.StringFlag{Name: "binary", Usage: "override the vibe-pushover executable path", Value: options.Executable},
 			configFlag(),
 		},
@@ -115,10 +115,14 @@ func installCommand(options Options) *cli.Command {
 			if err != nil {
 				return err
 			}
+			resource := "hooks"
+			if agent == "pi" {
+				resource = "extension"
+			}
 			if changed {
-				_, err = fmt.Fprintf(options.Stdout, "Installed %s hooks in %s\n", agent, path)
+				_, err = fmt.Fprintf(options.Stdout, "Installed %s %s in %s\n", agent, resource, path)
 			} else {
-				_, err = fmt.Fprintf(options.Stdout, "%s hooks are already installed in %s\n", agent, path)
+				_, err = fmt.Fprintf(options.Stdout, "%s %s already installed in %s\n", agent, resource, path)
 			}
 			return err
 		},

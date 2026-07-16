@@ -145,6 +145,33 @@ func TestInstallCommandWiresCustomPushoverConfig(t *testing.T) {
 	}
 }
 
+func TestInstallCommandCreatesPiExtension(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	extensionPath := filepath.Join(dir, "extensions", "vibe-pushover", "index.ts")
+	app := command.New(command.Options{
+		Stdout:     &bytes.Buffer{},
+		Stderr:     &bytes.Buffer{},
+		Executable: "/opt/bin/vibe-pushover",
+	})
+	err := app.Run(context.Background(), []string{
+		"vibe-pushover", "install",
+		"--agent", "pi",
+		"--agent-config", extensionPath,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	data, err := os.ReadFile(extensionPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !bytes.Contains(data, []byte(`pi.on("agent_settled"`)) {
+		t.Fatalf("Pi extension does not register agent_settled: %s", data)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {

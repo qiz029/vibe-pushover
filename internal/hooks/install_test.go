@@ -11,6 +11,36 @@ import (
 	"github.com/qiz029/vibe-pushover/internal/hooks"
 )
 
+func TestDefaultPathPiHonorsAgentDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "custom-pi-agent")
+	t.Setenv("PI_CODING_AGENT_DIR", dir)
+	t.Setenv("HOME", "")
+
+	got, err := hooks.DefaultPath("pi")
+	if err != nil {
+		t.Fatalf("DefaultPath() error = %v", err)
+	}
+	want := filepath.Join(dir, "extensions", "vibe-pushover", "index.ts")
+	if got != want {
+		t.Fatalf("DefaultPath() = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultPathPiExpandsTildeAgentDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PI_CODING_AGENT_DIR", "~/.custom-pi")
+
+	got, err := hooks.DefaultPath("pi")
+	if err != nil {
+		t.Fatalf("DefaultPath() error = %v", err)
+	}
+	want := filepath.Join(home, ".custom-pi", "extensions", "vibe-pushover", "index.ts")
+	if got != want {
+		t.Fatalf("DefaultPath() = %q, want %q", got, want)
+	}
+}
+
 func TestInstallAddsCodexHooks(t *testing.T) {
 	t.Parallel()
 
@@ -205,5 +235,71 @@ func TestInstallDoesNotReplaceCompositeCommandContainingMarker(t *testing.T) {
 	}
 	if len(got.Hooks["Stop"]) != 2 {
 		t.Fatalf("Stop hook count = %d, want 2", len(got.Hooks["Stop"]))
+	}
+}
+
+func TestInstallAddsPiTurnCompleteExtension(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".pi", "agent", "extensions", "vibe-pushover", "index.ts")
+	changed, err := hooks.Install("pi", path, "/opt/bin/vibe-pushover", "/tmp/pushover config.json")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	for _, want := range []string{
+		`pi.on("agent_settled"`,
+		`"/opt/bin/vibe-pushover"`,
+		`"/tmp/pushover config.json"`,
+		`"turn-complete"`,
+	} {
+		if !bytes.Contains(data, []byte(want)) {
+			t.Fatalf("Pi extension does not contain %q: %s", want, data)
+		}
+	}
+}
+
+func TestInstallPiExtensionIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "index.ts")
+	if _, err := hooks.Install("pi", path, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("first Install() error = %v", err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	changed, err := hooks.Install("pi", path, "/opt/bin/vibe-pushover", "")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed = true, want false")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("second Install() rewrote the Pi extension")
+	}
+}
+
+func TestInstallPiExtensionRefusesToOverwriteForeignFile(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "index.ts")
+	if err := os.WriteFile(path, []byte("export default function custom() {}\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := hooks.Install("pi", path, "/opt/bin/vibe-pushover", ""); err == nil {
+		t.Fatal("Install() error = nil, want foreign-file protection error")
 	}
 }

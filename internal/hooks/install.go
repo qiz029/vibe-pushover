@@ -14,6 +14,7 @@ import (
 var supportedAgents = map[string]struct{}{
 	"claude": {},
 	"codex":  {},
+	"pi":     {},
 }
 
 type hookCommand struct {
@@ -28,6 +29,16 @@ type hookGroup struct {
 }
 
 func DefaultPath(agent string) (string, error) {
+	if agent == "pi" {
+		if agentDir := os.Getenv("PI_CODING_AGENT_DIR"); agentDir != "" {
+			agentDir, err := expandHome(agentDir)
+			if err != nil {
+				return "", fmt.Errorf("resolve Pi agent directory: %w", err)
+			}
+			return filepath.Join(agentDir, "extensions", "vibe-pushover", "index.ts"), nil
+		}
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("find home directory: %w", err)
@@ -37,17 +48,36 @@ func DefaultPath(agent string) (string, error) {
 		return filepath.Join(home, ".codex", "hooks.json"), nil
 	case "claude":
 		return filepath.Join(home, ".claude", "settings.json"), nil
+	case "pi":
+		return filepath.Join(home, ".pi", "agent", "extensions", "vibe-pushover", "index.ts"), nil
 	default:
-		return "", fmt.Errorf("unsupported agent %q (supported: codex, claude)", agent)
+		return "", fmt.Errorf("unsupported agent %q (supported: codex, claude, pi)", agent)
 	}
+}
+
+func expandHome(path string) (string, error) {
+	if path != "~" && !strings.HasPrefix(path, "~/") && !strings.HasPrefix(path, `~\`) {
+		return path, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	if path == "~" {
+		return home, nil
+	}
+	return filepath.Join(home, path[2:]), nil
 }
 
 func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	if _, ok := supportedAgents[agent]; !ok {
-		return false, fmt.Errorf("unsupported agent %q (supported: codex, claude)", agent)
+		return false, fmt.Errorf("unsupported agent %q (supported: codex, claude, pi)", agent)
 	}
 	if strings.TrimSpace(executable) == "" {
 		return false, errors.New("executable path is required")
+	}
+	if agent == "pi" {
+		return installPiExtension(path, executable, pushoverConfig)
 	}
 
 	root, err := readRoot(path)
