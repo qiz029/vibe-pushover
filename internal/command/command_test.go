@@ -14,17 +14,18 @@ import (
 	"github.com/qiz029/vibe-pushover/internal/config"
 )
 
-func TestConfigureCommandStoresCredentials(t *testing.T) {
+func TestSetupCommandInteractivelyStoresCredentials(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "config.json")
 	var stdout bytes.Buffer
-	app := command.New(command.Options{Stdout: &stdout})
+	app := command.New(command.Options{
+		Stdin:  bytes.NewBufferString("app-token\nuser-key\n"),
+		Stdout: &stdout,
+	})
 	err := app.Run(context.Background(), []string{
-		"vibe-pushover", "configure",
+		"vibe-pushover", "setup",
 		"--config", path,
-		"--token", "app-token",
-		"--user", "user-key",
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -36,6 +37,29 @@ func TestConfigureCommandStoresCredentials(t *testing.T) {
 	want := config.Credentials{AppToken: "app-token", UserKey: "user-key"}
 	if got != want {
 		t.Fatalf("credentials = %#v, want %#v", got, want)
+	}
+	if strings.Contains(stdout.String(), "app-token") || strings.Contains(stdout.String(), "user-key") {
+		t.Fatalf("setup output exposed credentials: %q", stdout.String())
+	}
+}
+
+func TestSetupCommandRepromptsForEmptyCredential(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin:  bytes.NewBufferString("\napp-token\nuser-key\n"),
+		Stdout: &stdout,
+	})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "setup", "--config", path}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Value cannot be empty") {
+		t.Fatalf("setup output = %q, want empty-value guidance", stdout.String())
+	}
+	if _, err := config.Load(path); err != nil {
+		t.Fatalf("Load() error = %v", err)
 	}
 }
 

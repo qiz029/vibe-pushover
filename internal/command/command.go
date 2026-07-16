@@ -40,7 +40,7 @@ func New(options Options) *cli.Command {
 		Writer:                options.Stdout,
 		ErrWriter:             options.Stderr,
 		Commands: []*cli.Command{
-			configureCommand(options),
+			setupCommand(options),
 			installCommand(options),
 			notifyCommand(options),
 			testCommand(options),
@@ -48,19 +48,27 @@ func New(options Options) *cli.Command {
 	}
 }
 
-func configureCommand(options Options) *cli.Command {
+func setupCommand(options Options) *cli.Command {
 	return &cli.Command{
-		Name:  "configure",
-		Usage: "store Pushover credentials in the local config",
+		Name:    "setup",
+		Aliases: []string{"configure"},
+		Usage:   "interactively create the local Pushover config",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "token", Usage: "Pushover application token (or VIBE_PUSHOVER_TOKEN)"},
-			&cli.StringFlag{Name: "user", Usage: "Pushover user/group key (or VIBE_PUSHOVER_USER)"},
 			configFlag(),
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
+			prompter := newSecretPrompter(options.Stdin, options.Stdout)
+			appToken, err := prompter.readRequired("Pushover application token: ")
+			if err != nil {
+				return err
+			}
+			userKey, err := prompter.readRequired("Pushover user/group key: ")
+			if err != nil {
+				return err
+			}
 			credentials := config.Credentials{
-				AppToken: firstNonEmpty(cmd.String("token"), os.Getenv("VIBE_PUSHOVER_TOKEN")),
-				UserKey:  firstNonEmpty(cmd.String("user"), os.Getenv("VIBE_PUSHOVER_USER")),
+				AppToken: appToken,
+				UserKey:  userKey,
 			}
 			path, err := configPath(cmd.String("config"))
 			if err != nil {
@@ -234,13 +242,4 @@ func withDefaults(options Options) Options {
 		}
 	}
 	return options
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value = strings.TrimSpace(value); value != "" {
-			return value
-		}
-	}
-	return ""
 }
