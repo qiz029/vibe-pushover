@@ -1,12 +1,13 @@
 package hooks
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 )
 
@@ -41,7 +42,7 @@ func DefaultPath(agent string) (string, error) {
 	}
 }
 
-func Install(agent, path, executable string) (bool, error) {
+func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	if _, ok := supportedAgents[agent]; !ok {
 		return false, fmt.Errorf("unsupported agent %q (supported: codex, claude)", agent)
 	}
@@ -69,6 +70,9 @@ func Install(agent, path, executable string) (bool, error) {
 		"PermissionRequest": "approval-required",
 	} {
 		command := shellQuote(executable) + " notify --agent " + agent + " --event " + event + " --ignore-errors"
+		if pushoverConfig != "" {
+			command += " --config " + shellQuote(pushoverConfig)
+		}
 		entry := hookGroup{Hooks: []hookCommand{{
 			Type:    "command",
 			Command: command,
@@ -102,8 +106,20 @@ func readRoot(path string) (map[string]any, error) {
 		return nil, fmt.Errorf("read agent config: %w", err)
 	}
 	var root map[string]any
-	if err := json.Unmarshal(data, &root); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&root); err != nil {
 		return nil, fmt.Errorf("parse agent config: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, errors.New("parse agent config: multiple top-level values")
+		}
+		return nil, fmt.Errorf("parse agent config: %w", err)
+	}
+	if root == nil {
+		return nil, errors.New("parse agent config: top-level value must be an object")
 	}
 	return root, nil
 }
@@ -117,20 +133,35 @@ func upsert(value any, agent, event string, want hookGroup) ([]any, bool, error)
 			return nil, false, errors.New("hook value must be an array")
 		}
 	}
-	marker := "notify --agent " + agent + " --event " + event
 	for i, raw := range entries {
-		data, err := json.Marshal(raw)
-		if err != nil {
-			return nil, false, err
+		group, ok := raw.(map[string]any)
+		if !ok {
+			continue
 		}
-		if strings.Contains(string(data), marker) {
-			wantData, _ := json.Marshal(want)
-			var replacement any
-			_ = json.Unmarshal(wantData, &replacement)
-			if reflect.DeepEqual(raw, replacement) {
+		commands, ok := group["hooks"].([]any)
+		if !ok {
+			continue
+		}
+		for commandIndex, rawCommand := range commands {
+			command, ok := rawCommand.(map[string]any)
+			if !ok {
+				continue
+			}
+			current, _ := command["command"].(string)
+			if !isOwnedCommand(current, agent, event) {
+				continue
+			}
+			wanted := want.Hooks[0]
+			if hookMatches(command, wanted) {
 				return entries, false, nil
 			}
-			entries[i] = replacement
+			command["type"] = wanted.Type
+			command["command"] = wanted.Command
+			command["timeout"] = wanted.Timeout
+			command["async"] = wanted.Async
+			commands[commandIndex] = command
+			group["hooks"] = commands
+			entries[i] = group
 			return entries, true, nil
 		}
 	}
@@ -138,6 +169,28 @@ func upsert(value any, agent, event string, want hookGroup) ([]any, bool, error)
 	var entry any
 	_ = json.Unmarshal(data, &entry)
 	return append(entries, entry), true, nil
+}
+
+func isOwnedCommand(command, agent, event string) bool {
+	const separator = "' notify --agent "
+	separatorIndex := strings.LastIndex(command, separator)
+	if separatorIndex <= 0 || !strings.HasPrefix(command, "'") {
+		return false
+	}
+	tail := command[separatorIndex+2:]
+	base := "notify --agent " + agent + " --event " + event + " --ignore-errors"
+	if tail == base {
+		return true
+	}
+	configValue, ok := strings.CutPrefix(tail, base+" --config ")
+	return ok && len(configValue) >= 2 && strings.HasPrefix(configValue, "'") && strings.HasSuffix(configValue, "'")
+}
+
+func hookMatches(got map[string]any, want hookCommand) bool {
+	gotType, _ := got["type"].(string)
+	gotCommand, _ := got["command"].(string)
+	gotAsync, _ := got["async"].(bool)
+	return gotType == want.Type && gotCommand == want.Command && gotAsync == want.Async && fmt.Sprint(got["timeout"]) == fmt.Sprint(want.Timeout)
 }
 
 func writeJSON(path string, value any) error {

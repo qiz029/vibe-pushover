@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -88,6 +89,35 @@ func TestNotifyCommandSendsHookPayload(t *testing.T) {
 	}
 	if got["priority"] != "1" {
 		t.Fatalf("priority = %q, want 1", got["priority"])
+	}
+}
+
+func TestInstallCommandWiresCustomPushoverConfig(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	agentConfig := filepath.Join(dir, "hooks.json")
+	pushoverConfig := filepath.Join(dir, "pushover config.json")
+	app := command.New(command.Options{
+		Stdout:     &bytes.Buffer{},
+		Stderr:     &bytes.Buffer{},
+		Executable: "/opt/bin/vibe-pushover",
+	})
+	err := app.Run(context.Background(), []string{
+		"vibe-pushover", "install",
+		"--agent", "codex",
+		"--agent-config", agentConfig,
+		"--config", pushoverConfig,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	data, err := os.ReadFile(agentConfig)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !bytes.Contains(data, []byte(`--config '`+pushoverConfig+`'`)) {
+		t.Fatalf("installed hook does not use custom Pushover config: %s", data)
 	}
 }
 

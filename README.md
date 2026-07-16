@@ -35,7 +35,7 @@ vibe-pushover configure
 
 You can also use `--token` and `--user`, but environment variables avoid putting credentials in shell history.
 
-The default config is `~/.config/vibe-pushover/config.json` on macOS and Linux systems that use the standard Go user config directory. The containing directory and config file are created with `0700` and `0600` permissions. Use `--config PATH` on `configure`, `test`, or `notify` to override it.
+The default follows Go's user config directory: `~/Library/Application Support/vibe-pushover/config.json` on macOS, and `$XDG_CONFIG_HOME/vibe-pushover/config.json` (usually `~/.config/vibe-pushover/config.json`) on Linux. The containing directory and config file are created with `0700` and `0600` permissions. Use `--config PATH` on `configure`, `install`, `test`, or `notify` to override it.
 
 Send a real test notification:
 
@@ -64,7 +64,7 @@ The installer adds `Stop` and `PermissionRequest` command hooks. It preserves ex
 | Codex CLI | `~/.codex/hooks.json` |
 | Claude Code | `~/.claude/settings.json` |
 
-Use `--agent-config PATH` to target another file or `--binary PATH` when installing a binary that is not the currently running executable.
+Use `--agent-config PATH` to target another agent settings file or `--binary PATH` when installing a binary that is not the currently running executable. If credentials were written with `configure --config PATH`, pass the same path to `install --config PATH`; it will be embedded in both installed hook commands.
 
 Restart the agent after installation. Codex may ask you to trust the newly added local hooks before it runs them.
 

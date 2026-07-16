@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -82,9 +83,18 @@ func installCommand(options Options) *cli.Command {
 			&cli.StringFlag{Name: "agent", Usage: "agent to configure: codex or claude", Required: true},
 			&cli.StringFlag{Name: "agent-config", Usage: "override the agent config path"},
 			&cli.StringFlag{Name: "binary", Usage: "override the vibe-pushover executable path", Value: options.Executable},
+			configFlag(),
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			agent := strings.ToLower(strings.TrimSpace(cmd.String("agent")))
+			pushoverConfig := cmd.String("config")
+			if pushoverConfig != "" {
+				var err error
+				pushoverConfig, err = filepath.Abs(pushoverConfig)
+				if err != nil {
+					return fmt.Errorf("resolve Pushover config path: %w", err)
+				}
+			}
 			path := cmd.String("agent-config")
 			if path == "" {
 				var err error
@@ -93,7 +103,7 @@ func installCommand(options Options) *cli.Command {
 					return err
 				}
 			}
-			changed, err := hooks.Install(agent, path, cmd.String("binary"))
+			changed, err := hooks.Install(agent, path, cmd.String("binary"), pushoverConfig)
 			if err != nil {
 				return err
 			}
