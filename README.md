@@ -9,7 +9,22 @@ The CLI currently installs hooks for Codex CLI and Claude Code, plus a Pi extens
 
 ## Install
 
-Build the binary from this repository:
+Install the latest release on macOS or Linux:
+
+```sh
+curl -fsSL https://github.com/qiz029/vibe-pushover/releases/latest/download/install.sh | sh
+```
+
+By default the installer writes to `~/.local/bin`. Override it with `VIBE_PUSHOVER_INSTALL_DIR`, or pin a release with `VIBE_PUSHOVER_VERSION`:
+
+```sh
+curl -fsSL https://github.com/qiz029/vibe-pushover/releases/download/v0.1.0/install.sh | \
+  VIBE_PUSHOVER_VERSION=v0.1.0 VIBE_PUSHOVER_INSTALL_DIR="$HOME/bin" sh
+```
+
+`VIBE_PUSHOVER_DOWNLOAD_BASE_URL` can point the installer at a trusted mirror; when set, `VIBE_PUSHOVER_VERSION` is also required.
+
+Build from source instead:
 
 ```sh
 go install ./cmd/vibe-pushover
