@@ -7,6 +7,7 @@
 *.dll
 *.so
 *.dylib
+/vibe-pushover
 
 # Test binary, built with `go test -c`
 *.test
