@@ -49,6 +49,7 @@ func New(options Options) *cli.Command {
 			snoozeCommand(options),
 			focusCommand(options),
 			deviceCommand(options),
+			soundCommand(options),
 			agentsCommand(options),
 			installCommand(options),
 			previewCommand(options),
@@ -254,6 +255,87 @@ func profileCommand(options Options) *cli.Command {
 	}
 }
 
+func soundCommand(options Options) *cli.Command {
+	return &cli.Command{
+		Name:      "sound",
+		Usage:     "show or change the Pushover sound for each notification event",
+		ArgsUsage: "[event [sound|default|reset]]",
+		Flags:     []cli.Flag{configFlag()},
+		Action: func(_ context.Context, cmd *cli.Command) error {
+			path, err := configPath(cmd.String("config"))
+			if err != nil {
+				return err
+			}
+			credentials, err := config.Load(path)
+			if err != nil {
+				return err
+			}
+			if cmd.Args().Len() > 2 {
+				return errors.New("sound accepts an event and at most one sound value")
+			}
+			if cmd.Args().Len() == 0 {
+				for _, event := range []notification.Event{notification.EventTurnComplete, notification.EventApprovalRequired, notification.EventAttentionRequired} {
+					if _, err := fmt.Fprintf(options.Stdout, "%s: %s\n", event, effectiveSound(credentials, event)); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+			event := notification.Event(strings.ToLower(strings.TrimSpace(cmd.Args().Get(0))))
+			preference, preset, err := soundPreference(&credentials, event)
+			if err != nil {
+				return err
+			}
+			if cmd.Args().Len() == 1 {
+				_, err = fmt.Fprintln(options.Stdout, effectiveSound(credentials, event))
+				return err
+			}
+			value := strings.TrimSpace(cmd.Args().Get(1))
+			if value == "" {
+				return errors.New("sound value cannot be empty")
+			}
+			if strings.EqualFold(value, "reset") {
+				*preference = ""
+				if err := config.Save(path, credentials); err != nil {
+					return err
+				}
+				_, err = fmt.Fprintf(options.Stdout, "%s sound reset to %s\n", event, preset)
+				return err
+			}
+			if strings.EqualFold(value, "default") {
+				value = "default"
+			}
+			*preference = value
+			if err := config.Save(path, credentials); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(options.Stdout, "%s sound set to %s\n", event, value)
+			return err
+		},
+	}
+}
+
+func soundPreference(credentials *config.Credentials, event notification.Event) (*string, string, error) {
+	switch event {
+	case notification.EventTurnComplete:
+		return &credentials.TurnCompleteSound, "none", nil
+	case notification.EventApprovalRequired:
+		return &credentials.ApprovalSound, "persistent", nil
+	case notification.EventAttentionRequired:
+		return &credentials.AttentionSound, "persistent", nil
+	default:
+		return nil, "", errors.New("sound event must be turn-complete, approval-required, or attention-required")
+	}
+}
+
+func effectiveSound(credentials config.Credentials, event notification.Event) string {
+	preference, preset, err := soundPreference(&credentials, event)
+	if err != nil || *preference == "" {
+		return preset
+	}
+	return *preference
+}
+
 func agentsCommand(options Options) *cli.Command {
 	return &cli.Command{
 		Name:  "agents",
@@ -435,6 +517,7 @@ func notifyCommand(options Options) *cli.Command {
 			&cli.StringFlag{Name: "agent", Usage: "source agent name", Required: true},
 			&cli.StringFlag{Name: "event", Usage: "turn-complete, approval-required, or attention-required", Required: true},
 			&cli.BoolFlag{Name: "ignore-errors", Usage: "log delivery failures without failing the hook"},
+			&cli.BoolFlag{Name: "no-input", Hidden: true},
 			&cli.BoolFlag{Name: "skip-active-stop", Hidden: true},
 			&cli.BoolFlag{Name: "skip-non-completion", Hidden: true},
 			&cli.BoolFlag{Name: "skip-active-qwen-stop", Hidden: true},
@@ -444,9 +527,18 @@ func notifyCommand(options Options) *cli.Command {
 			configFlag(),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			payload, err := readPayload(options.Stdin)
-			if err != nil {
-				return err
+			var payload map[string]any
+			var err error
+			if cmd.Bool("no-input") {
+				payload = map[string]any{}
+				if cwd, cwdErr := os.Getwd(); cwdErr == nil {
+					payload["cwd"] = cwd
+				}
+			} else {
+				payload, err = readPayload(options.Stdin)
+				if err != nil {
+					return err
+				}
 			}
 			if cmd.Bool("skip-non-completion") {
 				cause, _ := payload["agent_stop_cause"].(string)
@@ -507,6 +599,7 @@ func notifyCommand(options Options) *cli.Command {
 					} else if !notification.ShouldDeliver(event, credentials.NotificationProfile) {
 						return nil
 					} else if message, err = notification.ApplyProfile(message, event, credentials.NotificationProfile); err == nil {
+						message = applyConfiguredSound(message, event, credentials)
 						fingerprint := notificationFingerprint(cmd.String("agent"), event, notificationDestination(credentials), payload, message)
 						store := dedupe.Store{Path: options.DedupePath, Now: options.Now}
 						reservation, duplicate, dedupeErr := reserveNotification(store, fingerprint)
@@ -594,6 +687,7 @@ func testCommand(options Options) *cli.Command {
 			if err != nil {
 				return err
 			}
+			message = applyConfiguredSound(message, event, credentials)
 			if err := sendWithCredentials(ctx, options, credentials, message); err != nil {
 				return err
 			}
@@ -601,6 +695,22 @@ func testCommand(options Options) *cli.Command {
 			return err
 		},
 	}
+}
+
+func applyConfiguredSound(message notification.Message, event notification.Event, credentials config.Credentials) notification.Message {
+	if credentials.NotificationProfile == "quiet" {
+		return message
+	}
+	preference, _, err := soundPreference(&credentials, event)
+	if err != nil || *preference == "" {
+		return message
+	}
+	if *preference == "default" {
+		message.Sound = ""
+	} else {
+		message.Sound = *preference
+	}
+	return message
 }
 
 func sendWithCredentials(ctx context.Context, options Options, credentials config.Credentials, message notification.Message) error {

@@ -5,7 +5,7 @@
 - finishes a turn;
 - needs manual approval or otherwise needs your attention.
 
-The CLI currently integrates with 27 coding agents: Aider, Amp, Augment Auggie, Claude Code, Cline, Codex CLI, GitHub Copilot CLI, Snowflake Cortex Code, Cursor, Factory Droid, Gemini CLI, Goose, Grok Build, Hermes Agent, Kimi Code CLI, Kiro, MiMo Code, Mistral Vibe, Oh My Pi, OpenHands CLI, OpenCode, Pi, Qoder, Qwen Code, TRAE, VS Code Agent, and Windsurf. It is written in Go and uses [`urfave/cli`](https://github.com/urfave/cli).
+The CLI currently integrates with 29 coding agents: Aider, Amp, Augment Auggie, Claude Code, Cline, Codex CLI, GitHub Copilot CLI, Snowflake Cortex Code, Cursor, Factory Droid, Gemini CLI, Goose, Grok Build, Hermes Agent, Kimi Code CLI, Kiro, MiMo Code, Mistral Vibe, Oh My Pi, OpenHands CLI, OpenCode, Pi, Qoder, Qwen Code, Rovo Dev CLI, Tabnine CLI, TRAE, VS Code Agent, and Windsurf. It is written in Go and uses [`urfave/cli`](https://github.com/urfave/cli).
 
 ## Install
 
@@ -18,8 +18,8 @@ curl -fsSL https://github.com/qiz029/vibe-pushover/releases/latest/download/inst
 By default the installer writes to `~/.local/bin`. Override it with `VIBE_PUSHOVER_INSTALL_DIR`, or pin a release with `VIBE_PUSHOVER_VERSION`:
 
 ```sh
-curl -fsSL https://github.com/qiz029/vibe-pushover/releases/download/v0.12.0/install.sh | \
-  VIBE_PUSHOVER_VERSION=v0.12.0 VIBE_PUSHOVER_INSTALL_DIR="$HOME/bin" sh
+curl -fsSL https://github.com/qiz029/vibe-pushover/releases/download/v0.13.0/install.sh | \
+  VIBE_PUSHOVER_VERSION=v0.13.0 VIBE_PUSHOVER_INSTALL_DIR="$HOME/bin" sh
 ```
 
 `VIBE_PUSHOVER_DOWNLOAD_BASE_URL` can point the installer at a trusted mirror; when set, `VIBE_PUSHOVER_VERSION` is also required.
@@ -100,6 +100,18 @@ vibe-pushover focus off   # resume completion notifications
 
 While focus mode is active, approval and attention notifications continue normally. Only `turn-complete` is suppressed. `blockers-only` is an alias for `focus`, and the mode expires automatically.
 
+Choose a distinct Pushover sound for each event without reinstalling any agent hooks:
+
+```sh
+vibe-pushover sound
+vibe-pushover sound turn-complete magic
+vibe-pushover sound approval-required persistent
+vibe-pushover sound attention-required default  # use the account/device default
+vibe-pushover sound turn-complete reset           # restore vibe-pushover's preset
+```
+
+Built-in names include `pushover`, `magic`, `incoming`, `persistent`, `vibrate`, and `none`. Names of custom sounds uploaded to the Pushover account that owns the application token are accepted too. The `quiet` profile always stays silent; event-specific choices override the sound preset of the other profiles.
+
 Targeting a device is optional. It is useful when the same Pushover account is active on several computers or phones and you only want coding-agent alerts on the phone that mirrors to your watch. Device names come from the Pushover dashboard, use letters, numbers, `_`, or `-`, and are limited to 25 characters each. Pushover ignores device targeting for ordinary groups and multi-user requests; a single Team-owned group can filter by device name. If a named device is invalid or no longer enabled, Pushover may broadcast to all active devices instead of dropping the message.
 
 ## Install agent integrations
@@ -117,6 +129,8 @@ vibe-pushover install --agent mistral
 vibe-pushover install --agent omp
 vibe-pushover install --agent openhands
 vibe-pushover install --agent opencode
+vibe-pushover install --agent rovo
+vibe-pushover install --agent tabnine
 vibe-pushover install --agent trae
 ```
 
@@ -146,6 +160,8 @@ vibe-pushover install --agent trae
 | Pi | completion | `$PI_CODING_AGENT_DIR/extensions/vibe-pushover/index.ts` or `~/.pi/agent/extensions/vibe-pushover/index.ts` |
 | Qoder | completion | `~/.qoder/settings.json` |
 | Qwen Code | completion, approval, idle attention | `~/.qwen/settings.json` |
+| Rovo Dev CLI | completion, approval, error attention | `~/.rovodev/config.yml` |
+| Tabnine CLI | completion, error attention (macOS/Linux) | `~/.tabnine/agent/settings.json` plus `~/.tabnine/hooks/{after-agent,on-error}.sh` |
 | TRAE | completion, approval | `~/.trae/hooks.json` |
 | VS Code Agent | completion | `$COPILOT_HOME/hooks/vibe-pushover.json` or `~/.copilot/hooks/vibe-pushover.json` (preview hook API) |
 | Windsurf | completion | `~/.codeium/windsurf/hooks.json` |
@@ -162,11 +178,15 @@ Kimi loads the new TOML hooks when a new session starts; its `Stop` event does n
 
 OpenHands CLI loads the installed global hook from `~/.openhands/hooks.json` for terminal, headless, and ACP sessions. A repository-level `.openhands/hooks.json` takes precedence over the global file instead of merging with it; install that project file explicitly with `--agent-config .openhands/hooks.json` when a repository already has OpenHands hooks. OpenHands exposes a stable `Stop` hook but no hook that proves a tool is waiting for manual approval, so this integration reports completion only. A different `Stop` hook can deny stopping and make the agent continue after the notification because OpenHands does not expose a later per-turn completion event.
 
+Rovo Dev CLI uses its native [`on_complete`, `on_error`, and `on_tool_permission` event hooks](https://www.atlassian.com/blog/development/streamline-rovo-dev-cli-with-event-hooks). Installation merges commands into the existing YAML configuration, preserves third-party commands and comments, and does not read from the agent's inherited terminal input. Restart Rovo Dev after installation.
+
+Tabnine CLI uses its native [`after-agent` and `on-error` executable hooks](https://docs.tabnine.com/main/getting-started/tabnine-cli/features/hooks). Installation enables hooks in the matching global or project `settings.json` and creates the two scripts under that same `.tabnine/hooks` root. The current documented hook surface has no event proving a tool is waiting for approval, and the documented executable examples are POSIX shell scripts, so this integration reports completion and error attention on macOS/Linux only. Existing non-`vibe-pushover` scripts are never overwritten.
+
 Pi deliberately has no built-in permission popups, so its integration currently sends turn-complete notifications only. `vibe-pushover` does not add a confirmation policy or turn every Pi tool call into a manual approval.
 
 Cline installs its stable `TaskComplete` hook into the operating system's real Documents directory. At the standard `~/Documents` location that one hook is discovered by both the IDE and current CLI/SDK runtime, avoiding duplicate execution. If Windows My Documents or Linux XDG Documents is redirected elsewhere, installation also writes the CLI copy under `~/.cline/hooks`; both paths are ownership-checked before either is changed. It extracts the compact result from either the IDE's `taskComplete.taskMetadata.result` or the newer CLI/SDK `turn.outputText` payload, and ignores child-agent completions identified by `parent_agent_id`. Cline exposes pre-tool hooks but no dedicated event proving that a tool is blocked waiting for manual approval, so `vibe-pushover` deliberately reports completion only instead of producing false approval alerts. Use `--agent-config PATH` with the full `TaskComplete` hook file path when intentionally targeting a custom Cline hooks directory.
 
-Roo Code, Continue, and Crush have been audited but are not listed as supported because they do not currently expose a stable, installed user-level turn-complete or approval hook suitable for this integration. Roo Code emits task events through its programmatic extension/IPC API, but enabling that API requires process-level setup instead of a normal user hook configuration. Continue's current CLI source contains a hook schema and loader, but its lifecycle firing helpers are not wired into the chat flow. Crush's preliminary hook API currently exposes only `PreToolUse`; its built-in desktop notifications are not an external lifecycle hook. Warp already provides its own desktop notifications for completed agents and agents that need attention, but does not expose a corresponding external lifecycle hook. `vibe-pushover` intentionally avoids log polling for these tools because it would be fragile and could leak conversation content.
+Roo Code, Continue, Crush, Zed Agent, Junie, and GitLab Duo CLI have been audited but are not listed as supported because they do not currently expose a stable, installed user-level turn-complete or approval hook suitable for this integration. Roo Code emits task events through its programmatic extension/IPC API, but enabling that API requires process-level setup instead of a normal user hook configuration. Continue's current CLI source contains a hook schema and loader, but its lifecycle firing helpers are not wired into the chat flow. Crush's preliminary hook API currently exposes only `PreToolUse`; its built-in desktop notifications are not an external lifecycle hook. Zed's current task hook is limited to worktree creation, Junie's public notification request remains open, and GitLab Duo's external hook experiment currently exposes only `SessionStart` even though Duo has built-in system notifications. Warp already provides its own desktop notifications for completed agents and agents that need attention, but does not expose a corresponding external lifecycle hook. `vibe-pushover` intentionally avoids log polling for these tools because it would be fragile and could leak conversation content.
 
 Installed hooks use `--ignore-errors`: a network or Pushover failure is written to the agent's stderr but does not fail the agent turn.
 
@@ -217,6 +237,8 @@ Profiles control how noticeable those messages are:
 | `quiet` | silent, normal priority | silent, normal priority |
 | `urgent` | suppressed | persistent sound, high priority |
 | `watch` | default Pushover sound, normal priority | persistent sound, high priority |
+
+Event-specific choices from `vibe-pushover sound` replace the sound cells above while preserving each profile's delivery and priority behavior. `default` omits the API sound override so the Pushover account/device preference is used; `reset` restores the table preset. Custom sound names work after they are uploaded for the application token's owning account. `quiet` remains silent regardless of an event-specific setting.
 
 Use the permanent `urgent` profile when completion messages should always stay off. Use temporary `focus 2h` when you only need a blocker-only window for the current work session. `preview --profile urgent --event turn-complete` reports that the delivery would be suppressed instead of showing a notification that will not be sent.
 

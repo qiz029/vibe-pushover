@@ -17,6 +17,9 @@ type Credentials struct {
 	NotificationProfile string `json:"notification_profile,omitempty"`
 	SnoozedUntil        string `json:"snoozed_until,omitempty"`
 	FocusUntil          string `json:"focus_until,omitempty"`
+	TurnCompleteSound   string `json:"turn_complete_sound,omitempty"`
+	ApprovalSound       string `json:"approval_required_sound,omitempty"`
+	AttentionSound      string `json:"attention_required_sound,omitempty"`
 }
 
 func DefaultPath() (string, error) {
@@ -110,6 +113,18 @@ func (c Credentials) Validate() error {
 			return fmt.Errorf("focus_until must be an RFC3339 timestamp: %w", err)
 		}
 	}
+	for _, preference := range []struct {
+		field string
+		sound string
+	}{
+		{field: "turn_complete_sound", sound: c.TurnCompleteSound},
+		{field: "approval_required_sound", sound: c.ApprovalSound},
+		{field: "attention_required_sound", sound: c.AttentionSound},
+	} {
+		if !validSoundName(preference.sound) {
+			return fmt.Errorf("%s must be default or a 1-64 character Pushover sound name using letters, numbers, underscore, or hyphen, got %q", preference.field, preference.sound)
+		}
+	}
 	return nil
 }
 
@@ -128,6 +143,21 @@ func validDeviceName(device string) bool {
 		return false
 	}
 	for _, char := range device {
+		if (char < 'A' || char > 'Z') && (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '_' && char != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+func validSoundName(sound string) bool {
+	if sound == "" || sound == "default" {
+		return true
+	}
+	if len(sound) > 64 {
+		return false
+	}
+	for _, char := range sound {
 		if (char < 'A' || char > 'Z') && (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '_' && char != '-' {
 			return false
 		}

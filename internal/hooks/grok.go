@@ -7,6 +7,10 @@ func grokNotifyCommand(goos, executable, event, pushoverConfig string) (string, 
 }
 
 func hookNotifyCommandForOS(goos, agent, displayName, executable, event, pushoverConfig string) (string, error) {
+	return hookNotifyCommandForOSWithFlags(goos, agent, displayName, executable, event, pushoverConfig)
+}
+
+func hookNotifyCommandForOSWithFlags(goos, agent, displayName, executable, event, pushoverConfig string, flags ...string) (string, error) {
 	quote := func(value string) (string, error) {
 		return shellQuote(value), nil
 	}
@@ -19,6 +23,9 @@ func hookNotifyCommandForOS(goos, agent, displayName, executable, event, pushove
 		return "", fmt.Errorf("quote %s executable: %w", displayName, err)
 	}
 	command := executableArg + " notify --agent " + agent + " --event " + event + " --ignore-errors"
+	for _, flag := range flags {
+		command += " " + flag
+	}
 	if pushoverConfig == "" {
 		return command, nil
 	}

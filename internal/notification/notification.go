@@ -253,6 +253,8 @@ func displayName(value string) string {
 		"openhands":     "OpenHands",
 		"opencode":      "OpenCode",
 		"qwen":          "Qwen Code",
+		"rovo":          "Rovo Dev",
+		"tabnine":       "Tabnine",
 		"trae":          "TRAE",
 		"vibe-pushover": "vibe-pushover",
 		"vscode":        "VS Code",

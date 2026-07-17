@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,6 +95,24 @@ func TestRejectsInvalidTargetDevice(t *testing.T) {
 		err := (config.Credentials{AppToken: "app", UserKey: "user", Device: device}).Validate()
 		if err == nil {
 			t.Fatalf("Validate() accepted invalid device %q", device)
+		}
+	}
+}
+
+func TestSoundPreferencesSupportBuiltInCustomAndAccountDefaultNames(t *testing.T) {
+	t.Parallel()
+
+	valid := config.Credentials{
+		AppToken: "app", UserKey: "user",
+		TurnCompleteSound: "magic", ApprovalSound: "team_alert-1", AttentionSound: "default",
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("Validate() rejected sound preferences: %v", err)
+	}
+	for _, sound := range []string{"two words", "bad/sound", strings.Repeat("a", 65)} {
+		credentials := config.Credentials{AppToken: "app", UserKey: "user", TurnCompleteSound: sound}
+		if err := credentials.Validate(); err == nil {
+			t.Fatalf("Validate() accepted invalid sound %q", sound)
 		}
 	}
 }

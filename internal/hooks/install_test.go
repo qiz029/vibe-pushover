@@ -97,6 +97,8 @@ func TestDefaultPathsForAdditionalAgents(t *testing.T) {
 		"openhands": filepath.Join(home, ".openhands", "hooks.json"),
 		"qoder":     filepath.Join(home, ".qoder", "settings.json"),
 		"qwen":      filepath.Join(home, ".qwen", "settings.json"),
+		"rovo":      filepath.Join(home, ".rovodev", "config.yml"),
+		"tabnine":   filepath.Join(home, ".tabnine", "agent", "settings.json"),
 		"trae":      filepath.Join(home, ".trae", "hooks.json"),
 		"vscode":    filepath.Join(home, "copilot-home", "hooks", "vibe-pushover.json"),
 		"windsurf":  filepath.Join(home, ".codeium", "windsurf", "hooks.json"),
@@ -2398,5 +2400,137 @@ func TestInstallOpenHandsPreservesWrapperHooksAndConfigSymlink(t *testing.T) {
 		if !bytes.Contains(data, []byte(want)) {
 			t.Fatalf("OpenHands wrapper config does not contain %q:\n%s", want, data)
 		}
+	}
+}
+
+func TestInstallRovoDevHooksIsIdempotentAndPreservesThirdPartyCommands(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".rovodev", "config.yml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	original := "eventHooks:\n  events:\n    - name: on_complete\n      commands:\n        - command: ./existing-notifier.sh\n"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if changed, err := hooks.Install("rovo", path, "/opt/bin/vibe-pushover", ""); err != nil || !changed {
+		t.Fatalf("first Install() changed=%v error=%v", changed, err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	changed, err := hooks.Install("rovo", path, "/opt/bin/vibe-pushover", "")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed = true, want false")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(after second install) error = %v", err)
+	}
+	if !bytes.Equal(after, before) || !bytes.Contains(after, []byte("command: ./existing-notifier.sh")) {
+		t.Fatalf("Rovo Dev config changed or lost third-party command:\n%s", after)
+	}
+}
+
+func TestInstallRovoDevHooksPreservesConfigSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation may require elevated privileges on Windows")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "shared-rovo.yml")
+	path := filepath.Join(dir, ".rovodev", "config.yml")
+	if err := os.WriteFile(target, []byte("agent:\n  modelId: auto\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+	if _, err := hooks.Install("rovo", path, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("Lstat() error = %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("Install() replaced the Rovo Dev config symlink")
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("ReadFile(target) error = %v", err)
+	}
+	if !bytes.Contains(data, []byte("name: on_complete")) {
+		t.Fatalf("symlink target was not updated:\n%s", data)
+	}
+}
+
+func TestInstallTabnineHooksIsIdempotent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Tabnine documents POSIX executable hook scripts")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".tabnine", "agent", "settings.json")
+	if changed, err := hooks.Install("tabnine", path, "/opt/bin/vibe-pushover", ""); err != nil || !changed {
+		t.Fatalf("first Install() changed=%v error=%v", changed, err)
+	}
+	if changed, err := hooks.Install("tabnine", path, "/opt/bin/vibe-pushover", ""); err != nil || changed {
+		t.Fatalf("second Install() changed=%v error=%v", changed, err)
+	}
+}
+
+func TestInstallTabnineHooksRefusesUnownedScriptBeforeChangingSettings(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Tabnine documents POSIX executable hook scripts")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".tabnine", "agent", "settings.json")
+	hooksDir := filepath.Join(dir, ".tabnine", "hooks")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll(settings) error = %v", err)
+	}
+	if err := os.MkdirAll(hooksDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll(hooks) error = %v", err)
+	}
+	originalSettings := []byte("{\"hooks\":{\"enabled\":false}}\n")
+	if err := os.WriteFile(path, originalSettings, 0o600); err != nil {
+		t.Fatalf("WriteFile(settings) error = %v", err)
+	}
+	unownedPath := filepath.Join(hooksDir, "after-agent.sh")
+	unowned := []byte("#!/bin/sh\necho third-party\n")
+	if err := os.WriteFile(unownedPath, unowned, 0o700); err != nil {
+		t.Fatalf("WriteFile(unowned hook) error = %v", err)
+	}
+
+	changed, err := hooks.Install("tabnine", path, "/opt/bin/vibe-pushover", "")
+	if err == nil || changed || !strings.Contains(err.Error(), "not owned") {
+		t.Fatalf("Install() changed=%v error=%v, want ownership refusal", changed, err)
+	}
+	afterSettings, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatalf("ReadFile(settings) error = %v", readErr)
+	}
+	afterHook, readErr := os.ReadFile(unownedPath)
+	if readErr != nil {
+		t.Fatalf("ReadFile(unowned hook) error = %v", readErr)
+	}
+	if !bytes.Equal(afterSettings, originalSettings) || !bytes.Equal(afterHook, unowned) {
+		t.Fatal("refused install changed settings or unowned hook")
+	}
+	if _, statErr := os.Stat(filepath.Join(hooksDir, "on-error.sh")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("on-error.sh stat error = %v, want not exist", statErr)
 	}
 }

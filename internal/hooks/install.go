@@ -44,6 +44,8 @@ var agentCatalog = []AgentInfo{
 	{Name: "pi", DisplayName: "Pi", Capabilities: "completion only", Resource: "extension"},
 	{Name: "qoder", DisplayName: "Qoder", Capabilities: "completion only", Resource: "hooks"},
 	{Name: "qwen", DisplayName: "Qwen Code", Capabilities: "completion+approval+attention", Resource: "hooks"},
+	{Name: "rovo", DisplayName: "Rovo Dev CLI", Capabilities: "completion+approval+attention", Resource: "event hooks"},
+	{Name: "tabnine", DisplayName: "Tabnine CLI", Capabilities: "completion+attention (macOS/Linux)", Resource: "hook scripts"},
 	{Name: "trae", DisplayName: "TRAE", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "vscode", DisplayName: "VS Code Agent", Capabilities: "completion only", Resource: "hooks (preview)"},
 	{Name: "windsurf", DisplayName: "Windsurf", Capabilities: "completion only", Resource: "hooks"},
@@ -223,6 +225,10 @@ func DefaultPath(agent string) (string, error) {
 		return filepath.Join(home, ".qoder", "settings.json"), nil
 	case "qwen":
 		return filepath.Join(home, ".qwen", "settings.json"), nil
+	case "rovo":
+		return filepath.Join(home, ".rovodev", "config.yml"), nil
+	case "tabnine":
+		return filepath.Join(home, ".tabnine", "agent", "settings.json"), nil
 	case "trae":
 		return filepath.Join(home, ".trae", "hooks.json"), nil
 	case "vscode":
@@ -350,6 +356,12 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	}
 	if agent == "openhands" {
 		return installOpenHandsHooks(path, executable, pushoverConfig)
+	}
+	if agent == "rovo" {
+		return installRovoHooks(path, executable, pushoverConfig)
+	}
+	if agent == "tabnine" {
+		return installTabnineHooks(path, executable, pushoverConfig)
 	}
 	if agent == "grok" || agent == "trae" {
 		var err error

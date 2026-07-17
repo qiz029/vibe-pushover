@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -314,6 +315,80 @@ func TestTestCommandSupportsCompletionAndAttentionStyles(t *testing.T) {
 	}
 }
 
+func TestTestCommandUsesConfiguredEventSound(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", TurnCompleteSound: "magic",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var sound string
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if err := r.ParseForm(); err != nil {
+				t.Fatalf("ParseForm() error = %v", err)
+			}
+			sound = r.Form.Get("sound")
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"status":1}`)), Header: make(http.Header)}, nil
+		})},
+		Endpoint: "https://pushover.test/messages.json",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "test", "--config", path, "--event", "turn-complete",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if sound != "magic" {
+		t.Fatalf("sound = %q, want magic", sound)
+	}
+}
+
+func TestConfiguredEventSoundCanUseAccountDefaultButQuietStaysSilent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name, preference, profile, wantSound string
+	}{
+		{name: "account default", preference: "default", wantSound: ""},
+		{name: "quiet wins", preference: "magic", profile: "quiet", wantSound: "none"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := config.Save(path, config.Credentials{
+				AppToken: "app-token", UserKey: "user-key", TurnCompleteSound: tt.preference, NotificationProfile: tt.profile,
+			}); err != nil {
+				t.Fatalf("Save() error = %v", err)
+			}
+			var sound string
+			app := command.New(command.Options{
+				Stdin: &bytes.Buffer{}, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{},
+				HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					if err := r.ParseForm(); err != nil {
+						t.Fatalf("ParseForm() error = %v", err)
+					}
+					sound = r.Form.Get("sound")
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"status":1}`)), Header: make(http.Header)}, nil
+				})},
+				Endpoint: "https://pushover.test/messages.json",
+			})
+			if err := app.Run(context.Background(), []string{
+				"vibe-pushover", "test", "--config", path, "--event", "turn-complete",
+			}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if sound != tt.wantSound {
+				t.Fatalf("sound = %q, want %q", sound, tt.wantSound)
+			}
+		})
+	}
+}
+
 func TestSetupCommandStoresInteractiveTargetDevices(t *testing.T) {
 	t.Parallel()
 
@@ -392,6 +467,76 @@ func TestDeviceCommandShowsSetsAndClearsTarget(t *testing.T) {
 	}
 }
 
+func TestSoundCommandShowsSetsDefaultsAndResetsEventSounds(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var stdout bytes.Buffer
+	app := command.New(command.Options{Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &bytes.Buffer{}})
+
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "sound", "--config", path}); err != nil {
+		t.Fatalf("show Run() error = %v", err)
+	}
+	for _, want := range []string{"turn-complete: none", "approval-required: persistent", "attention-required: persistent"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("sound output does not contain %q:\n%s", want, stdout.String())
+		}
+	}
+
+	stdout.Reset()
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "sound", "turn-complete", "magic", "--config", path}); err != nil {
+		t.Fatalf("set Run() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.TurnCompleteSound != "magic" || !strings.Contains(stdout.String(), "turn-complete sound set to magic") {
+		t.Fatalf("TurnCompleteSound=%q output=%q", got.TurnCompleteSound, stdout.String())
+	}
+
+	stdout.Reset()
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "sound", "turn-complete", "default", "--config", path}); err != nil {
+		t.Fatalf("default Run() error = %v", err)
+	}
+	got, err = config.Load(path)
+	if err != nil {
+		t.Fatalf("Load(default) error = %v", err)
+	}
+	if got.TurnCompleteSound != "default" {
+		t.Fatalf("TurnCompleteSound after default = %q", got.TurnCompleteSound)
+	}
+
+	stdout.Reset()
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "sound", "turn-complete", "reset", "--config", path}); err != nil {
+		t.Fatalf("reset Run() error = %v", err)
+	}
+	got, err = config.Load(path)
+	if err != nil {
+		t.Fatalf("Load(reset) error = %v", err)
+	}
+	if got.TurnCompleteSound != "" || !strings.Contains(stdout.String(), "turn-complete sound reset to none") {
+		t.Fatalf("TurnCompleteSound after reset=%q output=%q", got.TurnCompleteSound, stdout.String())
+	}
+}
+
+func TestSoundCommandRejectsEmptySoundName(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	app := command.New(command.Options{Stdin: &bytes.Buffer{}, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}})
+	err := app.Run(context.Background(), []string{"vibe-pushover", "sound", "turn-complete", " ", "--config", path})
+	if err == nil || !strings.Contains(err.Error(), "cannot be empty") {
+		t.Fatalf("Run() error = %v, want empty sound rejection", err)
+	}
+}
+
 func TestNotifyCommandSendsHookPayload(t *testing.T) {
 	t.Parallel()
 
@@ -459,6 +604,32 @@ func TestNotifyCommandSendsHookPayload(t *testing.T) {
 	}
 	if got["device"] != "iphone" {
 		t.Fatalf("device = %q, want iphone", got["device"])
+	}
+}
+
+func TestNotifyNoInputDoesNotReadInheritedAgentTerminal(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	requests := 0
+	app := command.New(command.Options{
+		Stdin: errorReader{}, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			requests++
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"status":1}`)), Header: make(http.Header)}, nil
+		})},
+		Endpoint: "https://pushover.test/messages.json",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--config", path, "--agent", "rovo", "--event", "turn-complete", "--no-input",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("Pushover requests = %d, want 1", requests)
 	}
 }
 
@@ -1205,7 +1376,7 @@ func TestAgentsCommandShowsCapabilities(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"aider", "amp", "auggie", "claude", "cline", "codex", "copilot", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "kimi", "kiro", "mimo", "mistral", "omp", "openhands", "opencode", "pi", "qoder", "qwen", "trae", "vscode", "windsurf",
+		"aider", "amp", "auggie", "claude", "cline", "codex", "copilot", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "kimi", "kiro", "mimo", "mistral", "omp", "openhands", "opencode", "pi", "qoder", "qwen", "rovo", "tabnine", "trae", "vscode", "windsurf",
 		"completion+approval", "completion+approval+attention", "completion+attention", "completion only",
 	} {
 		if !strings.Contains(output, want) {
@@ -1714,6 +1885,115 @@ func TestInstallCommandCreatesOpenHandsCompletionHook(t *testing.T) {
 	}
 }
 
+func TestInstallCommandCreatesRovoDevLifecycleHooks(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".rovodev", "config.yml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	original := "# keep this comment\nagent:\n  modelId: auto\neventHooks:\n  events:\n    - name: on_complete\n      commands:\n        - command: ./existing-notifier.sh\n"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Executable: "/opt/bin/vibe-pushover",
+	})
+	args := []string{"vibe-pushover", "install", "--agent", "rovo", "--agent-config", path}
+	if err := app.Run(context.Background(), args); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	for _, want := range []string{
+		"# keep this comment",
+		"modelId: auto",
+		"command: ./existing-notifier.sh",
+		"name: on_complete",
+		"name: on_error",
+		"name: on_tool_permission",
+		"notify --agent rovo --event turn-complete --ignore-errors --no-input",
+		"notify --agent rovo --event attention-required --ignore-errors --no-input",
+		"notify --agent rovo --event approval-required --ignore-errors --no-input",
+	} {
+		if !bytes.Contains(data, []byte(want)) {
+			t.Fatalf("Rovo Dev config does not contain %q:\n%s", want, data)
+		}
+	}
+	if err := app.Run(context.Background(), args); err != nil {
+		t.Fatalf("second Run() error = %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(after second install) error = %v", err)
+	}
+	if !bytes.Equal(after, data) {
+		t.Fatalf("second install changed Rovo Dev config:\n%s", after)
+	}
+}
+
+func TestInstallCommandCreatesTabnineLifecycleHooks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Tabnine documents POSIX executable hook scripts")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".tabnine", "agent", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"ui":{"theme":"ANSI"},"hooks":{"enabled":false}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Executable: "/opt/bin/vibe-pushover",
+	})
+	args := []string{"vibe-pushover", "install", "--agent", "tabnine", "--agent-config", path}
+	if err := app.Run(context.Background(), args); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	settings, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(settings) error = %v", err)
+	}
+	var root map[string]any
+	if err := json.Unmarshal(settings, &root); err != nil {
+		t.Fatalf("Unmarshal(settings) error = %v", err)
+	}
+	ui, _ := root["ui"].(map[string]any)
+	hookSettings, _ := root["hooks"].(map[string]any)
+	if ui["theme"] != "ANSI" || hookSettings["enabled"] != true {
+		t.Fatalf("Tabnine settings = %#v", root)
+	}
+
+	hooksDir := filepath.Join(dir, ".tabnine", "hooks")
+	for name, event := range map[string]string{"after-agent.sh": "turn-complete", "on-error.sh": "attention-required"} {
+		data, err := os.ReadFile(filepath.Join(hooksDir, name))
+		if err != nil {
+			t.Fatalf("ReadFile(%s) error = %v", name, err)
+		}
+		for _, want := range []string{"# Generated by vibe-pushover for Tabnine CLI.", "--agent tabnine --event " + event, "--ignore-errors --no-input"} {
+			if !bytes.Contains(data, []byte(want)) {
+				t.Fatalf("Tabnine hook %s does not contain %q:\n%s", name, want, data)
+			}
+		}
+		info, err := os.Stat(filepath.Join(hooksDir, name))
+		if err != nil {
+			t.Fatalf("Stat(%s) error = %v", name, err)
+		}
+		if info.Mode().Perm()&0o100 == 0 {
+			t.Fatalf("Tabnine hook %s mode = %o, want executable", name, info.Mode().Perm())
+		}
+	}
+	if err := app.Run(context.Background(), args); err != nil {
+		t.Fatalf("second Run() error = %v", err)
+	}
+}
+
 func TestInstallCommandCreatesSharedClineHookForIDEAndCLI(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -1816,6 +2096,12 @@ func TestInstallCommandRefusesUnownedClineHook(t *testing.T) {
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
+
+type errorReader struct{}
+
+func (errorReader) Read([]byte) (int, error) {
+	return 0, errors.New("stdin must not be read")
+}
 
 func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return f(request)
