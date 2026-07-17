@@ -49,6 +49,7 @@ func New(options Options) *cli.Command {
 			setupCommand(options),
 			statusCommand(options),
 			profileCommand(options),
+			detailCommand(options),
 			snoozeCommand(options),
 			focusCommand(options),
 			quietHoursCommand(options),
@@ -83,11 +84,15 @@ func statusCommand(options Options) *cli.Command {
 			if profile == "" {
 				profile = "balanced"
 			}
+			detail := credentials.NotificationDetail
+			if detail == "" {
+				detail = "summary"
+			}
 			device := credentials.Device
 			if device == "" {
 				device = "all"
 			}
-			if _, err := fmt.Fprintf(options.Stdout, "Profile: %s\nDevice target: %s\n", profile, device); err != nil {
+			if _, err := fmt.Fprintf(options.Stdout, "Profile: %s\nDetail: %s\nDevice target: %s\n", profile, detail, device); err != nil {
 				return err
 			}
 			if credentials.IsSnoozed(now) {
@@ -531,6 +536,46 @@ func profileCommand(options Options) *cli.Command {
 	}
 }
 
+func detailCommand(options Options) *cli.Command {
+	return &cli.Command{
+		Name:      "detail",
+		Usage:     "show or change how much hook detail notifications include",
+		ArgsUsage: "[summary|minimal]",
+		Flags:     []cli.Flag{configFlag()},
+		Action: func(_ context.Context, cmd *cli.Command) error {
+			path, err := configPath(cmd.String("config"))
+			if err != nil {
+				return err
+			}
+			credentials, err := config.Load(path)
+			if err != nil {
+				return err
+			}
+			detail := strings.ToLower(strings.TrimSpace(cmd.Args().First()))
+			if detail == "" {
+				detail = credentials.NotificationDetail
+				if detail == "" {
+					detail = "summary"
+				}
+				_, err = fmt.Fprintln(options.Stdout, detail)
+				return err
+			}
+			if cmd.Args().Len() > 1 {
+				return errors.New("detail accepts at most one value")
+			}
+			credentials.NotificationDetail = detail
+			if detail == "summary" {
+				credentials.NotificationDetail = ""
+			}
+			if err := config.Save(path, credentials); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(options.Stdout, "Notification detail set to %s\n", detail)
+			return err
+		},
+	}
+}
+
 func soundCommand(options Options) *cli.Command {
 	return &cli.Command{
 		Name:      "sound",
@@ -707,13 +752,10 @@ func previewCommand(options Options) *cli.Command {
 				_, err = fmt.Fprintf(options.Stdout, "Delivery: suppressed by %s profile\n", profile)
 				return err
 			}
-			message, err = notification.ApplyProfile(message, event, profile)
+			credentials.NotificationProfile = profile
+			message, err = applyNotificationPreferences(message, event, credentials)
 			if err != nil {
 				return err
-			}
-			if configured {
-				credentials.NotificationProfile = profile
-				message = applyConfiguredSound(message, event, credentials)
 			}
 			_, err = fmt.Fprintf(options.Stdout,
 				"Title: %s\nBody: %s\nPriority: %d\nSound: %s\nTTL: %s\n",
@@ -755,6 +797,16 @@ func setupCommand(options Options) *cli.Command {
 			if profile == "balanced" {
 				profile = ""
 			}
+			detail, err := prompter.readChoice(
+				"Notification detail [summary/minimal] (summary): ",
+				"summary", "summary", "minimal",
+			)
+			if err != nil {
+				return err
+			}
+			if detail == "summary" {
+				detail = ""
+			}
 			device, err := prompter.readOptional("Target Pushover device(s), comma-separated (all; groups may ignore): ")
 			if err != nil {
 				return err
@@ -765,6 +817,7 @@ func setupCommand(options Options) *cli.Command {
 				UserKey:             userKey,
 				Device:              device,
 				NotificationProfile: profile,
+				NotificationDetail:  detail,
 			}
 			path, err := configPath(cmd.String("config"))
 			if err != nil {
@@ -848,6 +901,12 @@ func installAgent(stdout io.Writer, agent, agentConfig, executable, pushoverConf
 		if err != nil {
 			return err
 		}
+	}
+	if len(paths) == 0 {
+		if agent == "craft" {
+			return errors.New("no Craft Agents workspaces found; create a workspace or pass --agent-config")
+		}
+		return fmt.Errorf("no configuration paths found for %s; pass --agent-config", agent)
 	}
 	resource := "integration"
 	for _, info := range hooks.Agents() {
@@ -1005,24 +1064,26 @@ func notifyCommand(options Options) *cli.Command {
 						return nil
 					} else if !notification.ShouldDeliver(event, credentials.NotificationProfile) {
 						return nil
-					} else if message, err = notification.ApplyProfile(message, event, credentials.NotificationProfile); err == nil {
-						message = applyConfiguredSound(message, event, credentials)
-						fingerprint := notificationFingerprint(cmd.String("agent"), event, notificationDestination(credentials), payload, message)
-						store := dedupe.Store{Path: options.DedupePath, Now: options.Now}
-						reservation, duplicate, dedupeErr := reserveNotification(store, fingerprint)
-						if dedupeErr != nil {
-							_, _ = fmt.Fprintf(options.Stderr, "vibe-pushover: dedupe unavailable: %v\n", dedupeErr)
-						} else if duplicate {
-							return nil
-						}
-						err = sendWithCredentials(ctx, options, credentials, message)
-						if reservation.Token != "" {
-							if err == nil {
-								if commitErr := store.Commit(reservation); commitErr != nil {
-									_, _ = fmt.Fprintf(options.Stderr, "vibe-pushover: dedupe commit failed: %v\n", commitErr)
+					} else {
+						message, err = applyNotificationPreferences(message, event, credentials)
+						if err == nil {
+							fingerprint := notificationFingerprint(cmd.String("agent"), event, notificationDestination(credentials), payload, message)
+							store := dedupe.Store{Path: options.DedupePath, Now: options.Now}
+							reservation, duplicate, dedupeErr := reserveNotification(store, fingerprint)
+							if dedupeErr != nil {
+								_, _ = fmt.Fprintf(options.Stderr, "vibe-pushover: dedupe unavailable: %v\n", dedupeErr)
+							} else if duplicate {
+								return nil
+							}
+							err = sendWithCredentials(ctx, options, credentials, message)
+							if reservation.Token != "" {
+								if err == nil {
+									if commitErr := store.Commit(reservation); commitErr != nil {
+										_, _ = fmt.Fprintf(options.Stderr, "vibe-pushover: dedupe commit failed: %v\n", commitErr)
+									}
+								} else if releaseErr := store.Release(reservation); releaseErr != nil {
+									_, _ = fmt.Fprintf(options.Stderr, "vibe-pushover: dedupe release failed: %v\n", releaseErr)
 								}
-							} else if releaseErr := store.Release(reservation); releaseErr != nil {
-								_, _ = fmt.Fprintf(options.Stderr, "vibe-pushover: dedupe release failed: %v\n", releaseErr)
 							}
 						}
 					}
@@ -1116,11 +1177,10 @@ func testCommand(options Options) *cli.Command {
 				_, err = fmt.Fprintf(options.Stdout, "Test %s notification suppressed by %s profile\n", event, credentials.NotificationProfile)
 				return err
 			}
-			message, err = notification.ApplyProfile(message, event, credentials.NotificationProfile)
+			message, err = applyNotificationPreferences(message, event, credentials)
 			if err != nil {
 				return err
 			}
-			message = applyConfiguredSound(message, event, credentials)
 			if err := sendWithCredentials(ctx, options, credentials, message); err != nil {
 				return err
 			}
@@ -1128,6 +1188,18 @@ func testCommand(options Options) *cli.Command {
 			return err
 		},
 	}
+}
+
+func applyNotificationPreferences(message notification.Message, event notification.Event, credentials config.Credentials) (notification.Message, error) {
+	message, err := notification.ApplyDetail(message, event, credentials.NotificationDetail)
+	if err != nil {
+		return notification.Message{}, err
+	}
+	message, err = notification.ApplyProfile(message, event, credentials.NotificationProfile)
+	if err != nil {
+		return notification.Message{}, err
+	}
+	return applyConfiguredSound(message, event, credentials), nil
 }
 
 func applyConfiguredSound(message notification.Message, event notification.Event, credentials config.Credentials) notification.Message {

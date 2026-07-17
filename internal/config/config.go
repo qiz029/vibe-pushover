@@ -15,6 +15,7 @@ type Credentials struct {
 	UserKey             string        `json:"user_key"`
 	Device              string        `json:"device,omitempty"`
 	NotificationProfile string        `json:"notification_profile,omitempty"`
+	NotificationDetail  string        `json:"notification_detail,omitempty"`
 	SnoozedUntil        string        `json:"snoozed_until,omitempty"`
 	FocusUntil          string        `json:"focus_until,omitempty"`
 	QuietHoursStart     string        `json:"quiet_hours_start,omitempty"`
@@ -111,6 +112,11 @@ func (c Credentials) Validate() error {
 	case "", "balanced", "quiet", "urgent", "watch":
 	default:
 		return fmt.Errorf("notification profile must be balanced, quiet, urgent, or watch, got %q", c.NotificationProfile)
+	}
+	switch c.NotificationDetail {
+	case "", "summary", "minimal":
+	default:
+		return fmt.Errorf("notification detail must be summary or minimal, got %q", c.NotificationDetail)
 	}
 	if c.SnoozedUntil != "" {
 		if _, err := time.Parse(time.RFC3339Nano, c.SnoozedUntil); err != nil {

@@ -374,6 +374,37 @@ func TestTestCommandSupportsCompletionAndAttentionStyles(t *testing.T) {
 	}
 }
 
+func TestTestCommandAppliesConfiguredMinimalDetail(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", NotificationDetail: "minimal",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var body string
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if err := r.ParseForm(); err != nil {
+				t.Fatalf("ParseForm() error = %v", err)
+			}
+			body = r.Form.Get("message")
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"status":1}`)), Header: make(http.Header)}, nil
+		})},
+		Endpoint: "https://pushover.test/messages.json",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "test", "--config", path, "--event", "approval-required", "--message", "Sensitive test detail.",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if body != "Approval requested." {
+		t.Fatalf("test notification body = %q, want minimal body", body)
+	}
+}
+
 func TestTestCommandUsesConfiguredEventSound(t *testing.T) {
 	t.Parallel()
 
@@ -453,7 +484,7 @@ func TestSetupCommandStoresInteractiveTargetDevices(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "config.json")
 	app := command.New(command.Options{
-		Stdin: bytes.NewBufferString("app-token\nuser-key\nbalanced\niphone,ipad\n"), Stdout: &bytes.Buffer{},
+		Stdin: bytes.NewBufferString("app-token\nuser-key\nbalanced\nsummary\niphone,ipad\n"), Stdout: &bytes.Buffer{},
 	})
 	if err := app.Run(context.Background(), []string{"vibe-pushover", "setup", "--config", path}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -467,12 +498,31 @@ func TestSetupCommandStoresInteractiveTargetDevices(t *testing.T) {
 	}
 }
 
+func TestSetupCommandStoresInteractiveNotificationDetail(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	app := command.New(command.Options{
+		Stdin: bytes.NewBufferString("app-token\nuser-key\nbalanced\nminimal\nall\n"), Stdout: &bytes.Buffer{},
+	})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "setup", "--config", path}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.NotificationDetail != "minimal" {
+		t.Fatalf("NotificationDetail = %q, want minimal", got.NotificationDetail)
+	}
+}
+
 func TestSetupCommandNormalizesAllTargetDevicesToBroadcast(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "config.json")
 	app := command.New(command.Options{
-		Stdin: bytes.NewBufferString("app-token\nuser-key\nbalanced\nall\n"), Stdout: &bytes.Buffer{},
+		Stdin: bytes.NewBufferString("app-token\nuser-key\nbalanced\nsummary\nall\n"), Stdout: &bytes.Buffer{},
 	})
 	if err := app.Run(context.Background(), []string{"vibe-pushover", "setup", "--config", path}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -526,6 +576,46 @@ func TestDeviceCommandShowsSetsAndClearsTarget(t *testing.T) {
 	}
 }
 
+func TestDetailCommandShowsSetsAndResetsNotificationDetail(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var stdout bytes.Buffer
+	app := command.New(command.Options{Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &bytes.Buffer{}})
+
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "detail", "--config", path}); err != nil {
+		t.Fatalf("show Run() error = %v", err)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "summary" {
+		t.Fatalf("show output = %q, want summary", got)
+	}
+	stdout.Reset()
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "detail", "minimal", "--config", path}); err != nil {
+		t.Fatalf("set Run() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.NotificationDetail != "minimal" {
+		t.Fatalf("NotificationDetail after set = %q, want minimal", got.NotificationDetail)
+	}
+	stdout.Reset()
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "detail", "summary", "--config", path}); err != nil {
+		t.Fatalf("reset Run() error = %v", err)
+	}
+	got, err = config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() after reset error = %v", err)
+	}
+	if got.NotificationDetail != "" {
+		t.Fatalf("NotificationDetail after reset = %q, want empty default", got.NotificationDetail)
+	}
+}
+
 func TestStatusCommandSummarizesDeliveryControlsWithoutSecrets(t *testing.T) {
 	t.Parallel()
 
@@ -535,6 +625,7 @@ func TestStatusCommandSummarizesDeliveryControlsWithoutSecrets(t *testing.T) {
 		UserKey:             "secret-user-key",
 		Device:              "iphone,ipad",
 		NotificationProfile: "watch",
+		NotificationDetail:  "minimal",
 		SnoozedUntil:        "2026-07-18T07:00:00Z",
 		FocusUntil:          "2026-07-18T08:00:00Z",
 		QuietHoursStart:     "22:00",
@@ -558,6 +649,7 @@ func TestStatusCommandSummarizesDeliveryControlsWithoutSecrets(t *testing.T) {
 	}
 	want := strings.Join([]string{
 		"Profile: watch",
+		"Detail: minimal",
 		"Device target: iphone,ipad",
 		"Snooze: active until 2026-07-18 00:00 PDT",
 		"Focus: active until 2026-07-18 01:00 PDT",
@@ -586,7 +678,7 @@ func TestStatusCommandShowsDefaultActiveDeliveryState(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	for _, want := range []string{
-		"Profile: balanced", "Device target: all", "Snooze: off", "Focus: off", "Quiet hours: off", "Silence rules: 0",
+		"Profile: balanced", "Detail: summary", "Device target: all", "Snooze: off", "Focus: off", "Quiet hours: off", "Silence rules: 0",
 		"Sounds: turn-complete=none approval-required=persistent attention-required=persistent",
 	} {
 		if !strings.Contains(stdout.String(), want) {
@@ -771,6 +863,40 @@ func TestNotifyCommandSendsHookPayload(t *testing.T) {
 	}
 	if got["device"] != "iphone" {
 		t.Fatalf("device = %q, want iphone", got["device"])
+	}
+}
+
+func TestNotifyCommandMinimalDetailHidesHookPayloadContent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", NotificationDetail: "minimal",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	t.Setenv("CRAFT_EVENT_DATA", `{"cwd":"/tmp/private-project","tool_name":"Bash","tool_input":{"command":"deploy secret-service"}}`)
+	var title, body string
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if err := r.ParseForm(); err != nil {
+				t.Fatalf("ParseForm() error = %v", err)
+			}
+			title, body = r.Form.Get("title"), r.Form.Get("message")
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"status":1}`)), Header: make(http.Header)}, nil
+		})},
+		Endpoint: "https://pushover.test/messages.json",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--config", path, "--agent", "craft", "--event", "approval-required",
+		"--payload-env", "CRAFT_EVENT_DATA",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if title != "⚠ Craft Agents needs approval · private-project" || body != "Approval requested." {
+		t.Fatalf("title/body = %q / %q", title, body)
+	}
+	if strings.Contains(body, "deploy") || strings.Contains(body, "secret-service") {
+		t.Fatalf("minimal detail leaked hook payload: %q", body)
 	}
 }
 
@@ -1499,6 +1625,30 @@ func TestPreviewCommandUsesConfiguredProfileAndEventSound(t *testing.T) {
 	}
 }
 
+func TestPreviewCommandUsesConfiguredMinimalDetail(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", NotificationDetail: "minimal",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin:  bytes.NewBufferString(`{"cwd":"/tmp/demo","last_assistant_message":"Sensitive implementation summary."}`),
+		Stdout: &stdout, Stderr: &bytes.Buffer{},
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "preview", "--agent", "craft", "--event", "turn-complete", "--config", path,
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Body: Turn completed.") || strings.Contains(stdout.String(), "Sensitive implementation summary") {
+		t.Fatalf("minimal preview output leaked hook detail:\n%s", stdout.String())
+	}
+}
+
 func TestPreviewCommandExplicitQuietProfileOverridesConfiguredSound(t *testing.T) {
 	t.Parallel()
 
@@ -1717,7 +1867,7 @@ func TestAgentsCommandShowsCapabilities(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"aider", "amp", "antigravity", "auggie", "claude", "cline", "codebuddy", "codewhale", "codex", "copilot", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "junie", "kimi", "kiro", "mimo", "mistral", "omp", "openhands", "opencode", "pi", "qoder", "qwen", "rovo", "tabnine", "trae", "vscode", "windsurf", "workbuddy", "zcode",
+		"aider", "amp", "antigravity", "auggie", "claude", "cline", "codebuddy", "codewhale", "codex", "copilot", "craft", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "junie", "kimi", "kiro", "mimo", "mistral", "omp", "openhands", "opencode", "pi", "qoder", "qwen", "rovo", "tabnine", "trae", "vscode", "windsurf", "workbuddy", "zcode",
 		"completion+approval", "completion+approval+attention", "completion+attention", "completion only",
 	} {
 		if !strings.Contains(output, want) {
@@ -2443,8 +2593,10 @@ func TestInstallCommandConfiguresDetectedAgents(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("CRAFT_CONFIG_DIR", "")
 	for _, path := range []string{
 		filepath.Join(home, ".codex"),
+		filepath.Join(home, ".craft-agent", "workspaces", "work"),
 		filepath.Join(home, ".zcode", "cli"),
 	} {
 		if err := os.MkdirAll(path, 0o700); err != nil {
@@ -2462,7 +2614,7 @@ func TestInstallCommandConfiguresDetectedAgents(t *testing.T) {
 	if err := app.Run(context.Background(), []string{"vibe-pushover", "install", "--detected"}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	for _, want := range []string{"Installed codex hooks", "Installed zcode hooks"} {
+	for _, want := range []string{"Installed codex hooks", "Installed craft automations", "Installed zcode hooks"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("install output does not contain %q: %q", want, stdout.String())
 		}
@@ -2472,6 +2624,7 @@ func TestInstallCommandConfiguresDetectedAgents(t *testing.T) {
 		command string
 	}{
 		{filepath.Join(home, ".codex", "hooks.json"), "notify --agent codex --event turn-complete"},
+		{filepath.Join(home, ".craft-agent", "workspaces", "work", "automations.json"), "notify --agent craft --event turn-complete"},
 		{filepath.Join(home, ".zcode", "cli", "config.json"), "notify --agent zcode --event turn-complete"},
 	} {
 		data, err := os.ReadFile(installed.path)
@@ -2484,6 +2637,59 @@ func TestInstallCommandConfiguresDetectedAgents(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("undetected Claude config was created: %v", err)
+	}
+}
+
+func TestInstallCommandConfiguresEveryCraftWorkspace(t *testing.T) {
+	configDir := filepath.Join(t.TempDir(), "craft-config")
+	t.Setenv("CRAFT_CONFIG_DIR", configDir)
+	for _, name := range []string{"personal", "work"} {
+		if err := os.MkdirAll(filepath.Join(configDir, "workspaces", name), 0o700); err != nil {
+			t.Fatalf("MkdirAll(%q) error = %v", name, err)
+		}
+	}
+	stdout := &bytes.Buffer{}
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: stdout, Stderr: &bytes.Buffer{}, Executable: "/opt/bin/vibe-pushover",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "install", "--agent", "craft", "--config", filepath.Join(t.TempDir(), "pushover.json"),
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, name := range []string{"personal", "work"} {
+		path := filepath.Join(configDir, "workspaces", name, "automations.json")
+		if !strings.Contains(stdout.String(), "Installed craft automations in "+path) {
+			t.Fatalf("install output does not include %q:\n%s", path, stdout.String())
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) error = %v", path, err)
+		}
+		for _, want := range []string{
+			"notify --agent craft --event turn-complete",
+			"notify --agent craft --event approval-required",
+			"notify --agent craft --event attention-required",
+		} {
+			if !bytes.Contains(data, []byte(want)) {
+				t.Fatalf("%s does not contain %q:\n%s", path, want, data)
+			}
+		}
+	}
+}
+
+func TestInstallCommandCraftRequiresAWorkspaceOrExplicitConfig(t *testing.T) {
+	configDir := filepath.Join(t.TempDir(), "empty-craft-config")
+	t.Setenv("CRAFT_CONFIG_DIR", configDir)
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Executable: "/opt/bin/vibe-pushover",
+	})
+	err := app.Run(context.Background(), []string{"vibe-pushover", "install", "--agent", "craft"})
+	if err == nil || !strings.Contains(err.Error(), "no Craft Agents workspaces found; create a workspace or pass --agent-config") {
+		t.Fatalf("Run() error = %v", err)
 	}
 }
 

@@ -59,6 +59,27 @@ func TestSaveAndLoadNotificationProfile(t *testing.T) {
 	}
 }
 
+func TestSaveAndLoadNotificationDetail(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	want := config.Credentials{
+		AppToken:           "app-token",
+		UserKey:            "user-key",
+		NotificationDetail: "minimal",
+	}
+	if err := config.Save(path, want); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Load() = %#v, want %#v", got, want)
+	}
+}
+
 func TestSaveAndLoadTargetDevices(t *testing.T) {
 	t.Parallel()
 
@@ -86,6 +107,15 @@ func TestRejectsUnknownNotificationProfile(t *testing.T) {
 	err := (config.Credentials{AppToken: "app", UserKey: "user", NotificationProfile: "loudest"}).Validate()
 	if err == nil {
 		t.Fatal("Validate() accepted unknown notification profile")
+	}
+}
+
+func TestRejectsUnknownNotificationDetail(t *testing.T) {
+	t.Parallel()
+
+	err := (config.Credentials{AppToken: "app", UserKey: "user", NotificationDetail: "everything"}).Validate()
+	if err == nil || !strings.Contains(err.Error(), "notification detail must be summary or minimal") {
+		t.Fatalf("Validate() error = %v", err)
 	}
 }
 

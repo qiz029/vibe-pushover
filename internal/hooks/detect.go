@@ -124,6 +124,9 @@ func overrideDetectionMarkers(agent string, resolvedPaths []string) ([]string, e
 		if os.Getenv("COPILOT_HOME") != "" {
 			levels = 2
 		}
+	case "craft":
+		// Craft automations are stored one level below each workspace.
+		levels = 1
 	case "gemini":
 		if os.Getenv("GEMINI_CLI_HOME") != "" {
 			levels = 2

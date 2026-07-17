@@ -52,6 +52,27 @@ func ApplyProfile(message Message, event Event, profile string) (Message, error)
 	}
 }
 
+func ApplyDetail(message Message, event Event, detail string) (Message, error) {
+	switch detail {
+	case "", "summary":
+		return message, nil
+	case "minimal":
+		switch event {
+		case EventTurnComplete:
+			message.Body = "Turn completed."
+		case EventApprovalRequired:
+			message.Body = "Approval requested."
+		case EventAttentionRequired:
+			message.Body = "Agent needs your attention."
+		default:
+			return Message{}, errors.New("event must be turn-complete, approval-required, or attention-required")
+		}
+		return message, nil
+	default:
+		return Message{}, fmt.Errorf("notification detail must be summary or minimal, got %q", detail)
+	}
+}
+
 func Build(agent string, event Event, payload map[string]any) (Message, error) {
 	agent = strings.TrimSpace(agent)
 	if agent == "copilot-vscode" {
@@ -271,6 +292,7 @@ func displayName(value string) string {
 		"antigravity":   "Antigravity",
 		"codebuddy":     "CodeBuddy",
 		"codewhale":     "CodeWhale",
+		"craft":         "Craft Agents",
 		"cortex":        "Cortex Code",
 		"dotcraft":      "DotCraft",
 		"gajae":         "Gajae Code",

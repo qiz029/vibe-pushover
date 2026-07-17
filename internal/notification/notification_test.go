@@ -402,6 +402,34 @@ func TestBuildNotificationsAlwaysHaveABody(t *testing.T) {
 	}
 }
 
+func TestApplyDetailMinimalHidesHookPayloadContent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		event notification.Event
+		body  string
+	}{
+		{event: notification.EventTurnComplete, body: "Turn completed."},
+		{event: notification.EventApprovalRequired, body: "Approval requested."},
+		{event: notification.EventAttentionRequired, body: "Agent needs your attention."},
+	}
+	for _, test := range tests {
+		message := notification.Message{
+			Title: "keep project context", Body: "sensitive hook detail", URL: "https://example.com/session", URLTitle: "Open agent",
+		}
+		got, err := notification.ApplyDetail(message, test.event, "minimal")
+		if err != nil {
+			t.Fatalf("ApplyDetail(%q) error = %v", test.event, err)
+		}
+		if got.Body != test.body {
+			t.Errorf("ApplyDetail(%q) body = %q, want %q", test.event, got.Body, test.body)
+		}
+		if got.Title != message.Title || got.URL != message.URL || got.URLTitle != message.URLTitle {
+			t.Errorf("ApplyDetail(%q) changed notification context: %#v", test.event, got)
+		}
+	}
+}
+
 func TestBuildAttentionNotification(t *testing.T) {
 	t.Parallel()
 
@@ -502,6 +530,7 @@ func TestBuildUsesProductNamesInNotificationTitles(t *testing.T) {
 	t.Parallel()
 
 	for agent, want := range map[string]string{
+		"craft":     "✓ Craft Agents finished · demo",
 		"cortex":    "✓ Cortex Code finished · demo",
 		"dotcraft":  "✓ DotCraft finished · demo",
 		"kilo":      "✓ Kilo Code finished · demo",

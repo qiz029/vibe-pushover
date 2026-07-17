@@ -30,6 +30,7 @@ var agentCatalog = []AgentInfo{
 	{Name: "codewhale", DisplayName: "CodeWhale (DeepSeek-TUI)", Capabilities: "completion+attention", Resource: "hooks"},
 	{Name: "codex", DisplayName: "Codex CLI", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "copilot", DisplayName: "GitHub Copilot CLI", Capabilities: "completion+attention", Resource: "hooks"},
+	{Name: "craft", DisplayName: "Craft Agents", Capabilities: "completion+approval+attention", Resource: "automations"},
 	{Name: "cortex", DisplayName: "Snowflake Cortex Code", Capabilities: "completion+approval", Resource: "hooks (preview)"},
 	{Name: "cursor", DisplayName: "Cursor", Capabilities: "completion only", Resource: "hooks"},
 	{Name: "droid", DisplayName: "Factory Droid", Capabilities: "completion+attention", Resource: "hooks"},
@@ -86,6 +87,16 @@ type hookSpec struct {
 }
 
 func DefaultPath(agent string) (string, error) {
+	if agent == "craft" {
+		paths, err := defaultCraftPaths()
+		if err != nil {
+			return "", err
+		}
+		if len(paths) == 0 {
+			return "", errors.New("Craft Agents has no workspaces; create a workspace or pass --agent-config")
+		}
+		return paths[0], nil
+	}
 	if agent == "cline" {
 		paths, err := defaultClinePaths()
 		if err != nil {
@@ -311,6 +322,9 @@ func DefaultPath(agent string) (string, error) {
 }
 
 func DefaultPaths(agent string) ([]string, error) {
+	if agent == "craft" {
+		return defaultCraftPaths()
+	}
 	if agent == "cline" {
 		return defaultClinePaths()
 	}
@@ -399,6 +413,9 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	}
 	if agent == "cursor" {
 		return installCursorHooks(path, executable, pushoverConfig)
+	}
+	if agent == "craft" {
+		return installCraftAutomations(path, executable, pushoverConfig)
 	}
 	if agent == "cline" {
 		return installClineHook(path, executable, pushoverConfig)
@@ -571,12 +588,16 @@ func InstallAll(agent string, paths []string, executable, pushoverConfig string)
 }
 
 func isJSONNumericOne(value any) bool {
+	return isJSONNumeric(value, 1)
+}
+
+func isJSONNumeric(value any, want float64) bool {
 	number, ok := value.(json.Number)
 	if !ok {
 		return false
 	}
 	parsed, err := number.Float64()
-	return err == nil && parsed == 1
+	return err == nil && parsed == want
 }
 
 func resolveJSONHookPath(path, agent string) (string, error) {

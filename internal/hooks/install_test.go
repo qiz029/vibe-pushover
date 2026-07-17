@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -48,10 +49,44 @@ func TestDefaultPathGajaeConfigDirIsRelativeToHome(t *testing.T) {
 	}
 }
 
+func TestDefaultPathsCraftFindsEveryWorkspaceAndHonorsConfigDir(t *testing.T) {
+	configDir := filepath.Join(t.TempDir(), "craft-config")
+	t.Setenv("CRAFT_CONFIG_DIR", configDir)
+	t.Setenv("HOME", "")
+	for _, name := range []string{"work", "personal"} {
+		if err := os.MkdirAll(filepath.Join(configDir, "workspaces", name), 0o700); err != nil {
+			t.Fatalf("MkdirAll(%q) error = %v", name, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "workspaces", "README.txt"), []byte("not a workspace"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	got, err := hooks.DefaultPaths("craft")
+	if err != nil {
+		t.Fatalf("DefaultPaths() error = %v", err)
+	}
+	want := []string{
+		filepath.Join(configDir, "workspaces", "personal", "automations.json"),
+		filepath.Join(configDir, "workspaces", "work", "automations.json"),
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DefaultPaths() = %#v, want %#v", got, want)
+	}
+	first, err := hooks.DefaultPath("craft")
+	if err != nil {
+		t.Fatalf("DefaultPath() error = %v", err)
+	}
+	if first != want[0] {
+		t.Fatalf("DefaultPath() = %q, want %q", first, want[0])
+	}
+}
+
 func TestDetectedAgentsFindsEverySupportedConfigHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("CRAFT_CONFIG_DIR", "")
 	vscodeMarker := filepath.Join(".config", "Code", "User")
 	switch runtime.GOOS {
 	case "darwin":
@@ -70,6 +105,7 @@ func TestDetectedAgentsFindsEverySupportedConfigHome(t *testing.T) {
 		".codewhale",
 		".codex",
 		".copilot",
+		filepath.Join(".craft-agent", "workspaces", "main"),
 		filepath.Join(".snowflake", "cortex"),
 		".cursor",
 		".factory",
@@ -1179,6 +1215,143 @@ func TestInstallJuniePreservesConfigSymlink(t *testing.T) {
 	}
 	if !bytes.Contains(data, []byte(`"Stop"`)) || !bytes.Contains(data, []byte(`"model": "sonnet"`)) {
 		t.Fatalf("symlink target not updated or sibling config lost: %s", data)
+	}
+}
+
+func TestInstallCraftAddsLifecycleAutomationsWithoutControllingApproval(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "workspace", "automations.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	original := `{"version":2,"workspaceSetting":"keep","automations":{"SessionStart":[{"actions":[{"type":"command","command":"personal-login"}]}],"Notification":[{"matcher":"auth_success","actions":[{"type":"command","command":"personal-auth-log"}]}]}}`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	changed, err := hooks.Install("craft", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var got struct {
+		Version          int                         `json:"version"`
+		WorkspaceSetting string                      `json:"workspaceSetting"`
+		Automations      map[string][]map[string]any `json:"automations"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if got.Version != 2 || got.WorkspaceSetting != "keep" || len(got.Automations["SessionStart"]) != 1 {
+		t.Fatalf("Craft install changed unrelated config: %s", data)
+	}
+	if _, exists := got.Automations["PermissionRequest"]; exists {
+		t.Fatalf("Craft install must not control PermissionRequest: %s", data)
+	}
+	stop := got.Automations["Stop"]
+	if len(stop) != 1 || stop[0]["permissionMode"] != "allow-all" {
+		t.Fatalf("Craft Stop automations = %#v", stop)
+	}
+	stopActions, _ := stop[0]["actions"].([]any)
+	stopAction, _ := stopActions[0].(map[string]any)
+	stopCommand := fmt.Sprint(stopAction["command"])
+	if !strings.Contains(stopCommand, "notify --agent craft --event turn-complete --ignore-errors --payload-env CRAFT_EVENT_DATA --skip-active-stop") ||
+		!strings.Contains(stopCommand, "--config '/tmp/pushover.json'") || stopAction["timeout"] != float64(10000) {
+		t.Fatalf("Craft Stop action = %#v", stopAction)
+	}
+	notifications := got.Automations["Notification"]
+	if len(notifications) != 3 {
+		t.Fatalf("Craft Notification automation count = %d, want 3: %#v", len(notifications), notifications)
+	}
+	wants := map[string]string{"permission_prompt": "approval-required", "idle_prompt": "attention-required"}
+	for _, group := range notifications {
+		matcher := fmt.Sprint(group["matcher"])
+		if matcher == "auth_success" {
+			actions, _ := group["actions"].([]any)
+			action, _ := actions[0].(map[string]any)
+			if action["command"] != "personal-auth-log" {
+				t.Fatalf("third-party Craft automation changed: %#v", group)
+			}
+			continue
+		}
+		event, ok := wants[matcher]
+		if !ok {
+			t.Fatalf("unexpected Craft Notification matcher %q", matcher)
+		}
+		if group["permissionMode"] != "allow-all" {
+			t.Fatalf("Craft Notification permission mode = %#v", group["permissionMode"])
+		}
+		actions, _ := group["actions"].([]any)
+		action, _ := actions[0].(map[string]any)
+		command := fmt.Sprint(action["command"])
+		if !strings.Contains(command, "notify --agent craft --event "+event+" --ignore-errors --payload-env CRAFT_EVENT_DATA") || action["timeout"] != float64(10000) {
+			t.Fatalf("Craft %s action = %#v", matcher, action)
+		}
+	}
+
+	changed, err = hooks.Install("craft", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed Craft automations")
+	}
+}
+
+func TestInstallCraftPreservesAutomationSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior is platform-specific")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "shared-automations.json")
+	path := filepath.Join(dir, "workspace", "automations.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(target, []byte(`{"version":2,"workspaceSetting":"keep"}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+
+	if _, err := hooks.Install("craft", path, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("Lstat() error = %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("Install() replaced Craft automation symlink")
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("ReadFile(target) error = %v", err)
+	}
+	if !bytes.Contains(data, []byte(`"Stop"`)) || !bytes.Contains(data, []byte(`"workspaceSetting": "keep"`)) {
+		t.Fatalf("symlink target not updated or sibling config lost: %s", data)
+	}
+}
+
+func TestInstallCraftRejectsUnknownAutomationVersion(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "automations.json")
+	if err := os.WriteFile(path, []byte(`{"version":3,"automations":{}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := hooks.Install("craft", path, "/opt/bin/vibe-pushover", ""); err == nil || !strings.Contains(err.Error(), "version must be 2") {
+		t.Fatalf("Install() error = %v", err)
 	}
 }
 
