@@ -149,6 +149,42 @@ func TestBuildKiroCompletionUsesAssistantResponse(t *testing.T) {
 	}
 }
 
+func TestBuildClineIDECompletionUsesTaskResultAndWorkspace(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("cline", notification.EventTurnComplete, map[string]any{
+		"workspaceRoots": []any{"/Users/toddzheng/Workspace/golang/demo"},
+		"taskComplete": map[string]any{
+			"taskMetadata": map[string]any{
+				"result": "## Result\n\nImplemented the requested Cline integration.\nAll tests pass.",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Title != "✓ Cline finished · demo" || got.Body != "Implemented the requested Cline integration." {
+		t.Fatalf("Cline IDE notification = %#v", got)
+	}
+}
+
+func TestBuildClineCLICompletionUsesTurnOutput(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("cline", notification.EventTurnComplete, map[string]any{
+		"workspaceRoots": []string{"/tmp/cline-cli-demo"},
+		"turn": map[string]any{
+			"outputText": "Completed the CLI task successfully.\nAdditional implementation detail.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Title != "✓ Cline finished · cline-cli-demo" || got.Body != "Completed the CLI task successfully." {
+		t.Fatalf("Cline CLI notification = %#v", got)
+	}
+}
+
 func TestBuildHermesCompletionUsesNestedAssistantResponse(t *testing.T) {
 	t.Parallel()
 

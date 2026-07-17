@@ -148,6 +148,20 @@ func completionDetail(agent string, payload map[string]any) string {
 			return detail
 		}
 	}
+	if agent == "cline" {
+		if taskComplete, ok := payload["taskComplete"].(map[string]any); ok {
+			if taskMetadata, ok := taskComplete["taskMetadata"].(map[string]any); ok {
+				if detail := completionLine(stringValue(taskMetadata, "result")); detail != "" {
+					return detail
+				}
+			}
+		}
+		if turn, ok := payload["turn"].(map[string]any); ok {
+			if detail := completionLine(stringValue(turn, "outputText")); detail != "" {
+				return detail
+			}
+		}
+	}
 	if agent == "windsurf" {
 		if toolInfo, ok := payload["tool_info"].(map[string]any); ok {
 			return lastContentLine(stringValue(toolInfo, "response"))
@@ -186,17 +200,19 @@ func payloadWorkingDirectory(payload map[string]any) string {
 	if workspace := firstString(payload, "workspaceRoot", "workspace_root", "workspace"); workspace != "" {
 		return workspace
 	}
-	if roots, ok := payload["workspace_roots"].([]any); ok && len(roots) > 0 {
-		for _, raw := range roots {
-			if root, ok := raw.(string); ok && strings.TrimSpace(root) != "" {
-				return strings.TrimSpace(root)
+	for _, key := range []string{"workspace_roots", "workspaceRoots"} {
+		if roots, ok := payload[key].([]any); ok && len(roots) > 0 {
+			for _, raw := range roots {
+				if root, ok := raw.(string); ok && strings.TrimSpace(root) != "" {
+					return strings.TrimSpace(root)
+				}
 			}
 		}
-	}
-	if roots, ok := payload["workspace_roots"].([]string); ok && len(roots) > 0 {
-		for _, root := range roots {
-			if strings.TrimSpace(root) != "" {
-				return strings.TrimSpace(root)
+		if roots, ok := payload[key].([]string); ok && len(roots) > 0 {
+			for _, root := range roots {
+				if strings.TrimSpace(root) != "" {
+					return strings.TrimSpace(root)
+				}
 			}
 		}
 	}

@@ -180,6 +180,51 @@ func TestTestCommandExplainsUrgentCompletionSuppression(t *testing.T) {
 	}
 }
 
+func TestTestCommandCanForceDeliveryWhileSnoozed(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", SnoozedUntil: "2026-07-17T14:00:00Z",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	now := time.Date(2026, time.July, 17, 12, 0, 0, 0, time.UTC)
+	requests := 0
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin:  &bytes.Buffer{},
+		Stdout: &stdout,
+		Stderr: &bytes.Buffer{},
+		Now:    func() time.Time { return now },
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			requests++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"status":1,"request":"request-id"}`)),
+				Header:     make(http.Header),
+			}, nil
+		})},
+		Endpoint: "https://pushover.test/messages.json",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "test", "--config", path,
+	}); err != nil {
+		t.Fatalf("regular test Run() error = %v", err)
+	}
+	if requests != 0 || !strings.Contains(stdout.String(), "suppressed while notifications are snoozed") {
+		t.Fatalf("regular test requests = %d, output = %q", requests, stdout.String())
+	}
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "test", "--config", path, "--force",
+	}); err != nil {
+		t.Fatalf("forced test Run() error = %v", err)
+	}
+	if requests != 1 || !strings.Contains(stdout.String(), "Test approval-required notification sent") {
+		t.Fatalf("forced test requests = %d, output = %q", requests, stdout.String())
+	}
+}
+
 func TestTestCommandSupportsCompletionAndAttentionStyles(t *testing.T) {
 	t.Parallel()
 
@@ -1100,7 +1145,7 @@ func TestAgentsCommandShowsCapabilities(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"aider", "amp", "auggie", "claude", "codex", "copilot", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "kimi", "kiro", "mimo", "mistral", "omp", "opencode", "pi", "qoder", "qwen", "trae", "vscode", "windsurf",
+		"aider", "amp", "auggie", "claude", "cline", "codex", "copilot", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "kimi", "kiro", "mimo", "mistral", "omp", "opencode", "pi", "qoder", "qwen", "trae", "vscode", "windsurf",
 		"completion+approval", "completion+approval+attention", "completion+attention", "completion only",
 	} {
 		if !strings.Contains(output, want) {
@@ -1130,6 +1175,132 @@ func TestProfileCommandUpdatesExistingConfig(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "urgent") {
 		t.Fatalf("output = %q", stdout.String())
+	}
+}
+
+func TestSnoozeCommandTemporarilySuppressesNotifications(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	now := time.Date(2026, time.July, 17, 12, 0, 0, 0, time.UTC)
+	requests := 0
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin:  bytes.NewBufferString(`{"cwd":"/tmp/demo","last_assistant_message":"Done."}`),
+		Stdout: &stdout,
+		Stderr: &bytes.Buffer{},
+		Now:    func() time.Time { return now },
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			requests++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"status":1,"request":"request-id"}`)),
+				Header:     make(http.Header),
+			}, nil
+		})},
+		Endpoint:   "https://pushover.test/messages.json",
+		DedupePath: filepath.Join(t.TempDir(), "dedupe.json"),
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "snooze", "--config", path, "45m",
+	}); err != nil {
+		t.Fatalf("snooze Run() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.SnoozedUntil != "2026-07-17T12:45:00Z" {
+		t.Fatalf("SnoozedUntil = %q", got.SnoozedUntil)
+	}
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--config", path,
+		"--agent", "codex", "--event", "turn-complete",
+	}); err != nil {
+		t.Fatalf("notify Run() error = %v", err)
+	}
+	if requests != 0 {
+		t.Fatalf("Pushover requests = %d, want 0 while snoozed", requests)
+	}
+	if !strings.Contains(stdout.String(), "Notifications snoozed until 2026-07-17 12:45 UTC") {
+		t.Fatalf("snooze output = %q", stdout.String())
+	}
+}
+
+func TestSnoozeCommandShowsStatusAndResumes(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", SnoozedUntil: "2026-07-17T14:00:00Z",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin:  &bytes.Buffer{},
+		Stdout: &stdout,
+		Stderr: &bytes.Buffer{},
+		Now: func() time.Time {
+			return time.Date(2026, time.July, 17, 6, 0, 0, 0, time.FixedZone("PDT", -7*60*60))
+		},
+	})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "snooze", "--config", path}); err != nil {
+		t.Fatalf("status Run() error = %v", err)
+	}
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "snooze", "--config", path, "off"}); err != nil {
+		t.Fatalf("resume Run() error = %v", err)
+	}
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "snooze", "--config", path}); err != nil {
+		t.Fatalf("active status Run() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.SnoozedUntil != "" {
+		t.Fatalf("SnoozedUntil = %q, want cleared", got.SnoozedUntil)
+	}
+	for _, want := range []string{
+		"Notifications snoozed until 2026-07-17 07:00 PDT",
+		"Notifications resumed",
+		"Notifications are active",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("snooze output does not contain %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
+func TestSnoozeCommandPreservesSubsecondDeadline(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	app := command.New(command.Options{
+		Stdin:  &bytes.Buffer{},
+		Stdout: &bytes.Buffer{},
+		Stderr: &bytes.Buffer{},
+		Now: func() time.Time {
+			return time.Date(2026, time.July, 17, 12, 0, 0, 900_000_000, time.UTC)
+		},
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "snooze", "--config", path, "1s",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.SnoozedUntil != "2026-07-17T12:00:01.9Z" {
+		t.Fatalf("SnoozedUntil = %q", got.SnoozedUntil)
 	}
 }
 
@@ -1173,6 +1344,39 @@ func TestNotifyCommandSendsKimiStopFallback(t *testing.T) {
 	}
 	if message != "Turn completed." {
 		t.Fatalf("message = %q, want fallback body", message)
+	}
+}
+
+func TestNotifyCommandSkipsClineSubagentCompletion(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	requests := 0
+	app := command.New(command.Options{
+		Stdin:  bytes.NewBufferString(`{"hookName":"agent_end","parent_agent_id":"parent-agent","turn":{"outputText":"Child done."}}`),
+		Stdout: &bytes.Buffer{},
+		Stderr: &bytes.Buffer{},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			requests++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"status":1,"request":"request-id"}`)),
+				Header:     make(http.Header),
+			}, nil
+		})},
+		Endpoint: "https://pushover.test/messages.json",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--config", path,
+		"--agent", "cline", "--event", "turn-complete", "--skip-cline-subagent",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if requests != 0 {
+		t.Fatalf("Pushover requests = %d, want 0 for Cline subagent", requests)
 	}
 }
 
@@ -1291,6 +1495,101 @@ func TestInstallCommandCreatesKimiHooks(t *testing.T) {
 		if !bytes.Contains(data, []byte(want)) {
 			t.Fatalf("Kimi config does not contain %q: %s", want, data)
 		}
+	}
+}
+
+func TestInstallCommandCreatesSharedClineHookForIDEAndCLI(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdout:     &stdout,
+		Stderr:     &bytes.Buffer{},
+		Executable: "/opt/bin/vibe-pushover",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "install", "--agent", "cline",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	path := filepath.Join(home, "Documents", "Cline", "Hooks", "TaskComplete")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", path, err)
+	}
+	for _, want := range []string{
+		"# Generated by vibe-pushover for Cline.",
+		"'/opt/bin/vibe-pushover' notify --agent cline --event turn-complete --ignore-errors",
+		`{"cancel":false,"contextModification":"","errorMessage":""}`,
+	} {
+		if !bytes.Contains(data, []byte(want)) {
+			t.Fatalf("Cline hook %q does not contain %q:\n%s", path, want, data)
+		}
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(%q) error = %v", path, err)
+	}
+	if info.Mode().Perm()&0o100 == 0 {
+		t.Fatalf("Cline hook %q mode = %o, want executable", path, info.Mode().Perm())
+	}
+	if !strings.Contains(stdout.String(), "Documents/Cline/Hooks/TaskComplete") {
+		t.Fatalf("install output does not list the shared Cline hook:\n%s", stdout.String())
+	}
+	duplicatePath := filepath.Join(home, ".cline", "hooks", "TaskComplete")
+	if _, err := os.Stat(duplicatePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("install created a duplicate CLI hook: %v", err)
+	}
+	stdout.Reset()
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "install", "--agent", "cline",
+	}); err != nil {
+		t.Fatalf("second Run() error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "already installed") {
+		t.Fatalf("second install output = %q", stdout.String())
+	}
+	dataAfter, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(after second install) error = %v", err)
+	}
+	if !bytes.Equal(dataAfter, data) {
+		t.Fatalf("second install changed Cline hook:\n%s", dataAfter)
+	}
+}
+
+func TestInstallCommandRefusesUnownedClineHook(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	hook := filepath.Join(home, "Documents", "Cline", "Hooks", "TaskComplete")
+	if err := os.MkdirAll(filepath.Dir(hook), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	original := []byte("#!/bin/sh\necho personal-cline-hook\n")
+	if err := os.WriteFile(hook, original, 0o700); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	app := command.New(command.Options{
+		Stdout:     &bytes.Buffer{},
+		Stderr:     &bytes.Buffer{},
+		Executable: "/opt/bin/vibe-pushover",
+	})
+	err := app.Run(context.Background(), []string{
+		"vibe-pushover", "install", "--agent", "cline",
+	})
+	if err == nil || !strings.Contains(err.Error(), "not owned by vibe-pushover") {
+		t.Fatalf("Run() error = %v, want ownership refusal", err)
+	}
+	got, err := os.ReadFile(hook)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !bytes.Equal(got, original) {
+		t.Fatalf("personal Cline hook changed:\n%s", got)
 	}
 }
 

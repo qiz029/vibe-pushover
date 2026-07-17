@@ -24,6 +24,7 @@ var agentCatalog = []AgentInfo{
 	{Name: "amp", DisplayName: "Amp", Capabilities: "completion+approval+attention", Resource: "plugin"},
 	{Name: "auggie", DisplayName: "Augment Auggie", Capabilities: "completion only", Resource: "hooks+script"},
 	{Name: "claude", DisplayName: "Claude Code", Capabilities: "completion+approval", Resource: "hooks"},
+	{Name: "cline", DisplayName: "Cline", Capabilities: "completion only", Resource: "hooks"},
 	{Name: "codex", DisplayName: "Codex CLI", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "copilot", DisplayName: "GitHub Copilot CLI", Capabilities: "completion+attention", Resource: "hooks"},
 	{Name: "cortex", DisplayName: "Snowflake Cortex Code", Capabilities: "completion+approval", Resource: "hooks (preview)"},
@@ -73,6 +74,13 @@ type hookSpec struct {
 }
 
 func DefaultPath(agent string) (string, error) {
+	if agent == "cline" {
+		paths, err := defaultClinePaths()
+		if err != nil {
+			return "", err
+		}
+		return paths[0], nil
+	}
 	if agent == "copilot" || agent == "vscode" {
 		if configHome := os.Getenv("COPILOT_HOME"); configHome != "" {
 			configHome, err := expandHome(configHome)
@@ -223,6 +231,17 @@ func DefaultPath(agent string) (string, error) {
 	}
 }
 
+func DefaultPaths(agent string) ([]string, error) {
+	if agent == "cline" {
+		return defaultClinePaths()
+	}
+	path, err := DefaultPath(agent)
+	if err != nil {
+		return nil, err
+	}
+	return []string{path}, nil
+}
+
 func mimoPluginPath(goos, home string, getenv func(string) string) (string, error) {
 	configDir := getenv("XDG_CONFIG_HOME")
 	if configDir == "" && goos == "windows" {
@@ -295,6 +314,9 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	}
 	if agent == "cursor" {
 		return installCursorHooks(path, executable, pushoverConfig)
+	}
+	if agent == "cline" {
+		return installClineHook(path, executable, pushoverConfig)
 	}
 	if agent == "goose" {
 		return installGoosePlugin(path, executable, pushoverConfig)
@@ -402,6 +424,29 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func InstallAll(agent string, paths []string, executable, pushoverConfig string) ([]bool, error) {
+	if agent == "cline" {
+		for _, path := range paths {
+			resolved, err := resolveClineHookPath(path)
+			if err != nil {
+				return nil, err
+			}
+			if err := validateClineHookOwnership(resolved); err != nil {
+				return nil, err
+			}
+		}
+	}
+	changed := make([]bool, len(paths))
+	for index, path := range paths {
+		pathChanged, err := Install(agent, path, executable, pushoverConfig)
+		if err != nil {
+			return nil, err
+		}
+		changed[index] = pathChanged
+	}
+	return changed, nil
 }
 
 func isJSONNumericOne(value any) bool {

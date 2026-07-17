@@ -46,6 +46,7 @@ func New(options Options) *cli.Command {
 		Commands: []*cli.Command{
 			setupCommand(options),
 			profileCommand(options),
+			snoozeCommand(options),
 			deviceCommand(options),
 			agentsCommand(options),
 			installCommand(options),
@@ -54,6 +55,66 @@ func New(options Options) *cli.Command {
 			testCommand(options),
 		},
 	}
+}
+
+func snoozeCommand(options Options) *cli.Command {
+	return &cli.Command{
+		Name:      "snooze",
+		Aliases:   []string{"pause"},
+		Usage:     "temporarily pause all hook notifications",
+		ArgsUsage: "[duration|off]",
+		Flags:     []cli.Flag{configFlag()},
+		Action: func(_ context.Context, cmd *cli.Command) error {
+			now := options.Now()
+			path, err := configPath(cmd.String("config"))
+			if err != nil {
+				return err
+			}
+			credentials, err := config.Load(path)
+			if err != nil {
+				return err
+			}
+			value := strings.ToLower(strings.TrimSpace(cmd.Args().First()))
+			if value == "" {
+				if credentials.IsSnoozed(now) {
+					until, _ := time.Parse(time.RFC3339Nano, credentials.SnoozedUntil)
+					_, err = fmt.Fprintf(options.Stdout, "Notifications snoozed until %s\n", formatSnoozeDeadline(until, now.Location()))
+					return err
+				}
+				_, err = fmt.Fprintln(options.Stdout, "Notifications are active")
+				return err
+			}
+			if cmd.Args().Len() > 1 {
+				return errors.New("snooze accepts at most one duration or off")
+			}
+			if value == "off" || value == "resume" {
+				credentials.SnoozedUntil = ""
+				if err := config.Save(path, credentials); err != nil {
+					return err
+				}
+				_, err = fmt.Fprintln(options.Stdout, "Notifications resumed")
+				return err
+			}
+			duration, err := time.ParseDuration(value)
+			if err != nil {
+				return fmt.Errorf("parse snooze duration %q (examples: 30m, 2h): %w", value, err)
+			}
+			if duration <= 0 {
+				return errors.New("snooze duration must be greater than zero")
+			}
+			until := now.Add(duration)
+			credentials.SnoozedUntil = until.Format(time.RFC3339Nano)
+			if err := config.Save(path, credentials); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(options.Stdout, "Notifications snoozed until %s\n", formatSnoozeDeadline(until, now.Location()))
+			return err
+		},
+	}
+}
+
+func formatSnoozeDeadline(until time.Time, location *time.Location) string {
+	return until.In(location).Format("2006-01-02 15:04 MST")
 }
 
 func deviceCommand(options Options) *cli.Command {
@@ -274,17 +335,13 @@ func installCommand(options Options) *cli.Command {
 					return fmt.Errorf("resolve Pushover config path: %w", err)
 				}
 			}
-			path := cmd.String("agent-config")
-			if path == "" {
+			paths := []string{cmd.String("agent-config")}
+			if paths[0] == "" {
 				var err error
-				path, err = hooks.DefaultPath(agent)
+				paths, err = hooks.DefaultPaths(agent)
 				if err != nil {
 					return err
 				}
-			}
-			changed, err := hooks.Install(agent, path, cmd.String("binary"), pushoverConfig)
-			if err != nil {
-				return err
 			}
 			resource := "integration"
 			for _, info := range hooks.Agents() {
@@ -293,12 +350,21 @@ func installCommand(options Options) *cli.Command {
 					break
 				}
 			}
-			if changed {
-				_, err = fmt.Fprintf(options.Stdout, "Installed %s %s in %s\n", agent, resource, path)
-			} else {
-				_, err = fmt.Fprintf(options.Stdout, "%s %s already installed in %s\n", agent, resource, path)
+			changed, err := hooks.InstallAll(agent, paths, cmd.String("binary"), pushoverConfig)
+			if err != nil {
+				return err
 			}
-			return err
+			for index, path := range paths {
+				if changed[index] {
+					_, err = fmt.Fprintf(options.Stdout, "Installed %s %s in %s\n", agent, resource, path)
+				} else {
+					_, err = fmt.Fprintf(options.Stdout, "%s %s already installed in %s\n", agent, resource, path)
+				}
+				if err != nil {
+					return err
+				}
+			}
+			return nil
 		},
 	}
 }
@@ -317,6 +383,7 @@ func notifyCommand(options Options) *cli.Command {
 			&cli.BoolFlag{Name: "skip-active-qwen-stop", Hidden: true},
 			&cli.BoolFlag{Name: "skip-noninteractive-approval", Hidden: true},
 			&cli.BoolFlag{Name: "skip-mistral-subagent", Hidden: true},
+			&cli.BoolFlag{Name: "skip-cline-subagent", Hidden: true},
 			configFlag(),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -357,6 +424,15 @@ func notifyCommand(options Options) *cli.Command {
 					return nil
 				}
 			}
+			if cmd.Bool("skip-cline-subagent") {
+				parentAgentID, _ := payload["parent_agent_id"].(string)
+				if parentAgentID == "" {
+					parentAgentID, _ = payload["parentAgentId"].(string)
+				}
+				if strings.TrimSpace(parentAgentID) != "" {
+					return nil
+				}
+			}
 			event := notification.Event(cmd.String("event"))
 			message, err := notification.Build(cmd.String("agent"), event, payload)
 			if err == nil {
@@ -367,6 +443,8 @@ func notifyCommand(options Options) *cli.Command {
 					credentials, loadErr := config.Load(path)
 					if loadErr != nil {
 						err = loadErr
+					} else if credentials.IsSnoozed(options.Now()) {
+						return nil
 					} else if !notification.ShouldDeliver(event, credentials.NotificationProfile) {
 						return nil
 					} else if message, err = notification.ApplyProfile(message, event, credentials.NotificationProfile); err == nil {
@@ -412,6 +490,7 @@ func testCommand(options Options) *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "event", Usage: "turn-complete, approval-required, or attention-required", Value: "approval-required"},
 			&cli.StringFlag{Name: "message", Usage: "test message body", Value: "Test notification delivered successfully."},
+			&cli.BoolFlag{Name: "force", Usage: "send even when notifications are snoozed"},
 			configFlag(),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -424,6 +503,15 @@ func testCommand(options Options) *cli.Command {
 				return err
 			}
 			event := notification.Event(strings.ToLower(strings.TrimSpace(cmd.String("event"))))
+			now := options.Now()
+			if credentials.IsSnoozed(now) && !cmd.Bool("force") {
+				until, _ := time.Parse(time.RFC3339Nano, credentials.SnoozedUntil)
+				_, err = fmt.Fprintf(options.Stdout,
+					"Test %s notification suppressed while notifications are snoozed until %s; use --force to send\n",
+					event, formatSnoozeDeadline(until, now.Location()),
+				)
+				return err
+			}
 			cwd, _ := os.Getwd()
 			message, err := notification.Build("vibe-pushover", event, map[string]any{
 				"cwd": cwd, "message": cmd.String("message"),
@@ -545,17 +633,19 @@ func hasUsableWorkspace(payload map[string]any) bool {
 	if cwd, ok := payload["cwd"].(string); ok && strings.TrimSpace(cwd) != "" {
 		return true
 	}
-	switch roots := payload["workspace_roots"].(type) {
-	case []any:
-		for _, root := range roots {
-			if value, ok := root.(string); ok && strings.TrimSpace(value) != "" {
-				return true
+	for _, key := range []string{"workspace_roots", "workspaceRoots"} {
+		switch roots := payload[key].(type) {
+		case []any:
+			for _, root := range roots {
+				if value, ok := root.(string); ok && strings.TrimSpace(value) != "" {
+					return true
+				}
 			}
-		}
-	case []string:
-		for _, root := range roots {
-			if strings.TrimSpace(root) != "" {
-				return true
+		case []string:
+			for _, root := range roots {
+				if strings.TrimSpace(root) != "" {
+					return true
+				}
 			}
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type Credentials struct {
@@ -14,6 +15,7 @@ type Credentials struct {
 	UserKey             string `json:"user_key"`
 	Device              string `json:"device,omitempty"`
 	NotificationProfile string `json:"notification_profile,omitempty"`
+	SnoozedUntil        string `json:"snoozed_until,omitempty"`
 }
 
 func DefaultPath() (string, error) {
@@ -97,7 +99,17 @@ func (c Credentials) Validate() error {
 	default:
 		return fmt.Errorf("notification profile must be balanced, quiet, urgent, or watch, got %q", c.NotificationProfile)
 	}
+	if c.SnoozedUntil != "" {
+		if _, err := time.Parse(time.RFC3339Nano, c.SnoozedUntil); err != nil {
+			return fmt.Errorf("snoozed_until must be an RFC3339 timestamp: %w", err)
+		}
+	}
 	return nil
+}
+
+func (c Credentials) IsSnoozed(now time.Time) bool {
+	until, err := time.Parse(time.RFC3339Nano, c.SnoozedUntil)
+	return err == nil && now.Before(until)
 }
 
 func validDeviceName(device string) bool {

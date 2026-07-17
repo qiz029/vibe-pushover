@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/qiz029/vibe-pushover/internal/config"
 )
@@ -94,5 +95,25 @@ func TestRejectsInvalidTargetDevice(t *testing.T) {
 		if err == nil {
 			t.Fatalf("Validate() accepted invalid device %q", device)
 		}
+	}
+}
+
+func TestSnoozeStateUsesValidatedDeadline(t *testing.T) {
+	t.Parallel()
+
+	credentials := config.Credentials{
+		AppToken: "app", UserKey: "user", SnoozedUntil: "2026-07-17T12:30:00Z",
+	}
+	before := time.Date(2026, time.July, 17, 12, 29, 59, 0, time.UTC)
+	atDeadline := time.Date(2026, time.July, 17, 12, 30, 0, 0, time.UTC)
+	if !credentials.IsSnoozed(before) {
+		t.Fatal("IsSnoozed() = false before deadline")
+	}
+	if credentials.IsSnoozed(atDeadline) {
+		t.Fatal("IsSnoozed() = true at deadline")
+	}
+	credentials.SnoozedUntil = "tomorrow"
+	if err := credentials.Validate(); err == nil {
+		t.Fatal("Validate() accepted malformed snooze deadline")
 	}
 }

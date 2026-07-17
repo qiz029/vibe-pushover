@@ -80,6 +80,7 @@ func TestDefaultPathsForAdditionalAgents(t *testing.T) {
 		"aider":    filepath.Join(home, ".aider.conf.yml"),
 		"amp":      filepath.Join(home, ".config", "amp", "plugins", "vibe-pushover.ts"),
 		"auggie":   filepath.Join(home, ".augment", "settings.json"),
+		"cline":    filepath.Join(home, "Documents", "Cline", "Hooks", "TaskComplete"),
 		"copilot":  filepath.Join(home, "copilot-home", "hooks", "vibe-pushover.json"),
 		"cortex":   filepath.Join(home, ".snowflake", "cortex", "hooks.json"),
 		"droid":    filepath.Join(home, ".factory", "settings.json"),
