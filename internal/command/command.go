@@ -96,11 +96,11 @@ func agentsCommand(options Options) *cli.Command {
 		Name:  "agents",
 		Usage: "list supported coding agents and notification capabilities",
 		Action: func(_ context.Context, _ *cli.Command) error {
-			if _, err := fmt.Fprintln(options.Stdout, "AGENT      CAPABILITIES         INTEGRATION"); err != nil {
+			if _, err := fmt.Fprintln(options.Stdout, "AGENT      CAPABILITIES                    INTEGRATION"); err != nil {
 				return err
 			}
 			for _, agent := range hooks.Agents() {
-				if _, err := fmt.Fprintf(options.Stdout, "%-10s %-20s %s (%s)\n", agent.Name, agent.Capabilities, agent.DisplayName, agent.Resource); err != nil {
+				if _, err := fmt.Fprintf(options.Stdout, "%-10s %-31s %s (%s)\n", agent.Name, agent.Capabilities, agent.DisplayName, agent.Resource); err != nil {
 					return err
 				}
 			}
@@ -247,12 +247,27 @@ func notifyCommand(options Options) *cli.Command {
 			&cli.BoolFlag{Name: "ignore-errors", Usage: "log delivery failures without failing the hook"},
 			// Kept as a no-op so hooks installed by the pre-Kimi release candidate keep working.
 			&cli.BoolFlag{Name: "skip-active-stop", Hidden: true},
+			&cli.BoolFlag{Name: "skip-non-completion", Hidden: true},
+			&cli.BoolFlag{Name: "skip-active-qwen-stop", Hidden: true},
 			configFlag(),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			payload, err := readPayload(options.Stdin)
 			if err != nil {
 				return err
+			}
+			if cmd.Bool("skip-non-completion") {
+				cause, _ := payload["agent_stop_cause"].(string)
+				cause = strings.TrimSpace(cause)
+				if cause != "end_turn" {
+					return nil
+				}
+			}
+			if cmd.Bool("skip-active-qwen-stop") {
+				active, _ := payload["stop_hook_active"].(bool)
+				if active {
+					return nil
+				}
 			}
 			event := notification.Event(cmd.String("event"))
 			message, err := notification.Build(cmd.String("agent"), event, payload)

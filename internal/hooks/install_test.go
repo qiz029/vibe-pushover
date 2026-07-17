@@ -36,11 +36,15 @@ func TestDefaultPathsForAdditionalAgents(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "~/.xdg")
 
 	tests := map[string]string{
+		"auggie":   filepath.Join(home, ".augment", "settings.json"),
 		"copilot":  filepath.Join(home, "copilot-home", "hooks", "vibe-pushover.json"),
 		"droid":    filepath.Join(home, ".factory", "settings.json"),
 		"gemini":   filepath.Join(home, "gemini-home", ".gemini", "settings.json"),
 		"goose":    filepath.Join(home, ".agents", "plugins", "vibe-pushover"),
 		"opencode": filepath.Join(home, ".xdg", "opencode", "plugins", "vibe-pushover.ts"),
+		"qwen":     filepath.Join(home, ".qwen", "settings.json"),
+		"vscode":   filepath.Join(home, "copilot-home", "hooks", "vibe-pushover.json"),
+		"windsurf": filepath.Join(home, ".codeium", "windsurf", "hooks.json"),
 	}
 	for agent, want := range tests {
 		got, err := hooks.DefaultPath(agent)
@@ -166,12 +170,77 @@ func TestInstallAddsGeminiTurnCompleteHook(t *testing.T) {
 	if bytes.Contains(data, []byte(`"async"`)) {
 		t.Fatalf("Gemini config contains a Claude-specific async field: %s", data)
 	}
+	if !bytes.Contains(data, []byte(`"timeout": 10000`)) {
+		t.Fatalf("Gemini hook timeout is not expressed in milliseconds: %s", data)
+	}
 	changed, err = hooks.Install("gemini", path, "/opt/bin/vibe-pushover", "")
 	if err != nil {
 		t.Fatalf("second Install() error = %v", err)
 	}
 	if changed {
 		t.Fatal("second Install() changed Gemini hooks")
+	}
+}
+
+func TestInstallAddsQwenCompletionApprovalAndIdleAttentionHooks(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".qwen", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"theme":"dark","hooks":{"BeforeToolUse":[{"hooks":[{"type":"command","command":"existing"}]}]}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	changed, err := hooks.Install("qwen", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var got struct {
+		Hooks map[string][]map[string]any `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	for _, event := range []string{"Stop", "PermissionRequest", "Notification"} {
+		if len(got.Hooks[event]) != 1 {
+			t.Fatalf("%s hook count = %d, want 1", event, len(got.Hooks[event]))
+		}
+		commands, _ := got.Hooks[event][0]["hooks"].([]any)
+		command, _ := commands[0].(map[string]any)
+		if command["timeout"] != float64(10000) || command["async"] != true {
+			t.Fatalf("%s command = %#v, want 10000ms async hook", event, command)
+		}
+	}
+	if got.Hooks["Notification"][0]["matcher"] != "idle_prompt" {
+		t.Fatalf("Notification matcher = %#v, want idle_prompt", got.Hooks["Notification"][0]["matcher"])
+	}
+	for _, want := range []string{
+		"--agent qwen --event turn-complete",
+		"--skip-active-qwen-stop",
+		"--agent qwen --event approval-required",
+		"--agent qwen --event attention-required",
+		"--config '/tmp/pushover.json'",
+		`"theme": "dark"`,
+		`"BeforeToolUse"`,
+	} {
+		if !bytes.Contains(data, []byte(want)) {
+			t.Fatalf("Qwen config does not contain %q:\n%s", want, data)
+		}
+	}
+	changed, err = hooks.Install("qwen", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed Qwen hooks")
 	}
 }
 
@@ -378,6 +447,274 @@ func TestInstallAddsCursorStopHook(t *testing.T) {
 	}
 	if changed {
 		t.Fatal("second Install() changed Cursor hooks")
+	}
+}
+
+func TestInstallAddsWindsurfPostResponseHook(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".codeium", "windsurf", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"hooks":{"post_read_code":[{"command":"existing","show_output":true}]}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	changed, err := hooks.Install("windsurf", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var got struct {
+		Hooks map[string][]map[string]any `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if len(got.Hooks["post_cascade_response"]) != 1 || len(got.Hooks["post_read_code"]) != 1 {
+		t.Fatalf("Windsurf hooks = %#v", got.Hooks)
+	}
+	wantCommand := "'/opt/bin/vibe-pushover' notify --agent windsurf --event turn-complete --ignore-errors --config '/tmp/pushover.json'"
+	if got.Hooks["post_cascade_response"][0]["command"] != wantCommand || got.Hooks["post_cascade_response"][0]["show_output"] != false {
+		t.Fatalf("post_cascade_response hook = %#v", got.Hooks["post_cascade_response"][0])
+	}
+	changed, err = hooks.Install("windsurf", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed Windsurf hooks")
+	}
+}
+
+func TestInstallAddsVSCodeAgentStopHook(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".copilot", "hooks", "vibe-pushover.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"version":1,"hooks":{"userPromptSubmitted":[{"type":"command","bash":"existing"}]}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	changed, err := hooks.Install("vscode", path, "/opt/bin/vibe-pushover", "")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var got struct {
+		Version int                         `json:"version"`
+		Hooks   map[string][]map[string]any `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if got.Version != 1 || len(got.Hooks["agentStop"]) != 1 || len(got.Hooks["userPromptSubmitted"]) != 1 {
+		t.Fatalf("VS Code hooks = %#v", got.Hooks)
+	}
+	stop := got.Hooks["agentStop"][0]
+	if stop["type"] != "command" || stop["timeoutSec"] != float64(10) || stop["bash"] != "'/opt/bin/vibe-pushover' notify --agent copilot-vscode --event turn-complete --ignore-errors" {
+		t.Fatalf("VS Code Stop hook = %#v", stop)
+	}
+	changed, err = hooks.Install("vscode", path, "/opt/bin/vibe-pushover", "")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed VS Code hooks")
+	}
+}
+
+func TestInstallCopilotAndVSCodeShareManifestWithoutDuplicateCompletion(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".copilot", "hooks", "vibe-pushover.json")
+	if _, err := hooks.Install("copilot", path, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install(copilot) error = %v", err)
+	}
+	changed, err := hooks.Install("vscode", path, "/opt/bin/vibe-pushover", "")
+	if err != nil {
+		t.Fatalf("Install(vscode) error = %v", err)
+	}
+	if changed {
+		t.Fatal("VS Code install duplicated the shared Copilot manifest")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var got struct {
+		Hooks map[string][]map[string]any `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if len(got.Hooks["agentStop"]) != 1 {
+		t.Fatalf("shared completion hook count = %d, want 1", len(got.Hooks["agentStop"]))
+	}
+}
+
+func TestInstallAddsAuggieCompletionHookAndWrapper(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "home with spaces", ".augment", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"model":"fast","hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/tmp/existing.sh"}]}]}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	changed, err := hooks.Install("auggie", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(settings) error = %v", err)
+	}
+	var got struct {
+		Hooks map[string][]map[string]any `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if len(got.Hooks["Stop"]) != 1 || len(got.Hooks["SessionStart"]) != 1 || !bytes.Contains(data, []byte(`"model": "fast"`)) {
+		t.Fatalf("Auggie settings did not preserve sibling config: %s", data)
+	}
+	stop := got.Hooks["Stop"][0]
+	metadata, _ := stop["metadata"].(map[string]any)
+	commands, _ := stop["hooks"].([]any)
+	command, _ := commands[0].(map[string]any)
+	wrapperPath := filepath.Join(filepath.Dir(path), "hooks", "vibe-pushover.sh")
+	if command["type"] != "command" || command["command"] != "'"+wrapperPath+"'" || command["timeout"] != float64(10000) || metadata["includeConversationData"] != true {
+		t.Fatalf("Auggie Stop hook = %#v", stop)
+	}
+	wrapper, err := os.ReadFile(wrapperPath)
+	if err != nil {
+		t.Fatalf("ReadFile(wrapper) error = %v", err)
+	}
+	for _, want := range []string{
+		"# Generated by vibe-pushover.",
+		"'/opt/bin/vibe-pushover' notify --agent auggie --event turn-complete --skip-non-completion --ignore-errors",
+		"--config '/tmp/pushover.json'",
+	} {
+		if !bytes.Contains(wrapper, []byte(want)) {
+			t.Fatalf("Auggie wrapper does not contain %q:\n%s", want, wrapper)
+		}
+	}
+	info, err := os.Stat(wrapperPath)
+	if err != nil {
+		t.Fatalf("Stat(wrapper) error = %v", err)
+	}
+	if info.Mode().Perm()&0o100 == 0 {
+		t.Fatalf("wrapper mode = %o, want executable", info.Mode().Perm())
+	}
+	changed, err = hooks.Install("auggie", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed Auggie integration")
+	}
+}
+
+func TestInstallAuggiePreservesOwnedGroupSiblings(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".augment", "settings.json")
+	wrapperPath := filepath.Join(filepath.Dir(path), "hooks", "vibe-pushover.sh")
+	original := map[string]any{
+		"hooks": map[string]any{
+			"Stop": []any{map[string]any{
+				"hooks": []any{
+					map[string]any{"type": "command", "command": wrapperPath, "timeout": 1, "custom": "keep-command"},
+					map[string]any{"type": "command", "command": "/tmp/keep.sh"},
+				},
+				"metadata": map[string]any{"custom": "keep-metadata"},
+				"custom":   "keep-group",
+			}},
+		},
+	}
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("WriteFile(settings) error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(wrapperPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll(wrapper) error = %v", err)
+	}
+	if err := os.WriteFile(wrapperPath, []byte("#!/bin/sh\n# Generated by vibe-pushover.\nexit 0\n"), 0o700); err != nil {
+		t.Fatalf("WriteFile(wrapper) error = %v", err)
+	}
+
+	if _, err := hooks.Install("auggie", path, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	data, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(settings) error = %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	hookMap := got["hooks"].(map[string]any)
+	group := hookMap["Stop"].([]any)[0].(map[string]any)
+	commands := group["hooks"].([]any)
+	metadata := group["metadata"].(map[string]any)
+	owned := commands[0].(map[string]any)
+	if len(commands) != 2 || commands[1].(map[string]any)["command"] != "/tmp/keep.sh" {
+		t.Fatalf("sibling commands were not preserved: %#v", commands)
+	}
+	if group["custom"] != "keep-group" || metadata["custom"] != "keep-metadata" || owned["custom"] != "keep-command" {
+		t.Fatalf("unknown Auggie fields were not preserved: %#v", group)
+	}
+	if owned["command"] != "'"+wrapperPath+"'" || owned["timeout"] != float64(10000) || metadata["includeConversationData"] != true {
+		t.Fatalf("owned Auggie hook was not updated: %#v", group)
+	}
+}
+
+func TestInstallAuggieRefusesMarkerOutsideGeneratedPrefix(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".augment", "settings.json")
+	wrapperPath := filepath.Join(filepath.Dir(path), "hooks", "vibe-pushover.sh")
+	if err := os.MkdirAll(filepath.Dir(wrapperPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	original := []byte("#!/bin/sh\necho '# Generated by vibe-pushover.'\n")
+	if err := os.WriteFile(wrapperPath, original, 0o700); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := hooks.Install("auggie", path, "/opt/bin/vibe-pushover", ""); err == nil {
+		t.Fatal("Install() overwrote a non-owned Auggie wrapper")
+	}
+	after, err := os.ReadFile(wrapperPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !bytes.Equal(after, original) {
+		t.Fatal("non-owned Auggie wrapper changed")
 	}
 }
 

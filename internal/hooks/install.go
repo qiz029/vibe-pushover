@@ -19,6 +19,7 @@ type AgentInfo struct {
 }
 
 var agentCatalog = []AgentInfo{
+	{Name: "auggie", DisplayName: "Augment Auggie", Capabilities: "completion only", Resource: "hooks+script"},
 	{Name: "claude", DisplayName: "Claude Code", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "codex", DisplayName: "Codex CLI", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "copilot", DisplayName: "GitHub Copilot CLI", Capabilities: "completion+attention", Resource: "hooks"},
@@ -29,6 +30,9 @@ var agentCatalog = []AgentInfo{
 	{Name: "kimi", DisplayName: "Kimi Code CLI", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "opencode", DisplayName: "OpenCode", Capabilities: "completion+approval", Resource: "plugin"},
 	{Name: "pi", DisplayName: "Pi", Capabilities: "completion only", Resource: "extension"},
+	{Name: "qwen", DisplayName: "Qwen Code", Capabilities: "completion+approval+attention", Resource: "hooks"},
+	{Name: "vscode", DisplayName: "VS Code Agent", Capabilities: "completion only", Resource: "hooks (preview)"},
+	{Name: "windsurf", DisplayName: "Windsurf", Capabilities: "completion only", Resource: "hooks"},
 }
 
 func Agents() []AgentInfo {
@@ -36,6 +40,7 @@ func Agents() []AgentInfo {
 }
 
 var supportedAgents = map[string]struct{}{
+	"auggie":   {},
 	"claude":   {},
 	"codex":    {},
 	"copilot":  {},
@@ -46,6 +51,9 @@ var supportedAgents = map[string]struct{}{
 	"kimi":     {},
 	"opencode": {},
 	"pi":       {},
+	"qwen":     {},
+	"vscode":   {},
+	"windsurf": {},
 }
 
 type hookCommand struct {
@@ -56,15 +64,25 @@ type hookCommand struct {
 }
 
 type hookGroup struct {
-	Hooks []hookCommand `json:"hooks"`
+	Matcher string        `json:"matcher,omitempty"`
+	Hooks   []hookCommand `json:"hooks"`
+}
+
+type hookSpec struct {
+	Name    string
+	Event   string
+	Matcher string
+	Timeout int
+	Async   bool
+	Flag    string
 }
 
 func DefaultPath(agent string) (string, error) {
-	if agent == "copilot" {
+	if agent == "copilot" || agent == "vscode" {
 		if configHome := os.Getenv("COPILOT_HOME"); configHome != "" {
 			configHome, err := expandHome(configHome)
 			if err != nil {
-				return "", fmt.Errorf("resolve Copilot home: %w", err)
+				return "", fmt.Errorf("resolve Copilot hook home: %w", err)
 			}
 			return filepath.Join(configHome, "hooks", "vibe-pushover.json"), nil
 		}
@@ -102,6 +120,8 @@ func DefaultPath(agent string) (string, error) {
 		return "", fmt.Errorf("find home directory: %w", err)
 	}
 	switch agent {
+	case "auggie":
+		return filepath.Join(home, ".augment", "settings.json"), nil
 	case "codex":
 		return filepath.Join(home, ".codex", "hooks.json"), nil
 	case "copilot":
@@ -131,8 +151,14 @@ func DefaultPath(agent string) (string, error) {
 		return filepath.Join(configDir, "opencode", "plugins", "vibe-pushover.ts"), nil
 	case "pi":
 		return filepath.Join(home, ".pi", "agent", "extensions", "vibe-pushover", "index.ts"), nil
+	case "qwen":
+		return filepath.Join(home, ".qwen", "settings.json"), nil
+	case "vscode":
+		return filepath.Join(home, ".copilot", "hooks", "vibe-pushover.json"), nil
+	case "windsurf":
+		return filepath.Join(home, ".codeium", "windsurf", "hooks.json"), nil
 	default:
-		return "", fmt.Errorf("unsupported agent %q (supported: claude, codex, copilot, cursor, droid, gemini, goose, kimi, opencode, pi)", agent)
+		return "", fmt.Errorf("unsupported agent %q (supported: auggie, claude, codex, copilot, cursor, droid, gemini, goose, kimi, opencode, pi, qwen, vscode, windsurf)", agent)
 	}
 }
 
@@ -152,7 +178,7 @@ func expandHome(path string) (string, error) {
 
 func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	if _, ok := supportedAgents[agent]; !ok {
-		return false, fmt.Errorf("unsupported agent %q (supported: claude, codex, copilot, cursor, droid, gemini, goose, kimi, opencode, pi)", agent)
+		return false, fmt.Errorf("unsupported agent %q (supported: auggie, claude, codex, copilot, cursor, droid, gemini, goose, kimi, opencode, pi, qwen, vscode, windsurf)", agent)
 	}
 	if strings.TrimSpace(executable) == "" {
 		return false, errors.New("executable path is required")
@@ -160,7 +186,10 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	if agent == "pi" {
 		return installPiExtension(path, executable, pushoverConfig)
 	}
-	if agent == "copilot" {
+	if agent == "auggie" {
+		return installAuggieHooks(path, executable, pushoverConfig)
+	}
+	if agent == "copilot" || agent == "vscode" {
 		return installCopilotHooks(path, executable, pushoverConfig)
 	}
 	if agent == "cursor" {
@@ -171,6 +200,9 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	}
 	if agent == "opencode" {
 		return installOpenCodePlugin(path, executable, pushoverConfig)
+	}
+	if agent == "windsurf" {
+		return installWindsurfHooks(path, executable, pushoverConfig)
 	}
 	if agent == "kimi" {
 		return installKimiHooks(path, executable, pushoverConfig)
@@ -190,36 +222,27 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 		return false, errors.New("agent config field \"hooks\" must be an object")
 	}
 
-	events := map[string]string{
-		"Stop":              "turn-complete",
-		"PermissionRequest": "approval-required",
-	}
-	if agent == "gemini" {
-		events = map[string]string{"AfterAgent": "turn-complete"}
-	} else if agent == "droid" {
-		events = map[string]string{
-			"Stop":         "turn-complete",
-			"Notification": "attention-required",
-		}
-	}
 	changed := false
-	for hookName, event := range events {
-		command := shellQuote(executable) + " notify --agent " + agent + " --event " + event + " --ignore-errors"
+	for _, spec := range genericHookSpecs(agent) {
+		command := shellQuote(executable) + " notify --agent " + agent + " --event " + spec.Event + " --ignore-errors"
+		if spec.Flag != "" {
+			command += " " + spec.Flag
+		}
 		if pushoverConfig != "" {
 			command += " --config " + shellQuote(pushoverConfig)
 		}
-		entry := hookGroup{Hooks: []hookCommand{{
+		entry := hookGroup{Matcher: spec.Matcher, Hooks: []hookCommand{{
 			Type:    "command",
 			Command: command,
-			Timeout: 10,
-			Async:   agent == "claude" || agent == "codex",
+			Timeout: spec.Timeout,
+			Async:   spec.Async,
 		}}}
-		updated, entryChanged, err := upsert(hookMap[hookName], agent, event, entry)
+		updated, entryChanged, err := upsert(hookMap[spec.Name], agent, spec.Event, entry)
 		if err != nil {
-			return false, fmt.Errorf("update %s hook: %w", hookName, err)
+			return false, fmt.Errorf("update %s hook: %w", spec.Name, err)
 		}
 		if entryChanged {
-			hookMap[hookName] = updated
+			hookMap[spec.Name] = updated
 			changed = true
 		}
 	}
@@ -230,6 +253,29 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func genericHookSpecs(agent string) []hookSpec {
+	switch agent {
+	case "gemini":
+		return []hookSpec{{Name: "AfterAgent", Event: "turn-complete", Timeout: 10000}}
+	case "droid":
+		return []hookSpec{
+			{Name: "Stop", Event: "turn-complete", Timeout: 10},
+			{Name: "Notification", Event: "attention-required", Timeout: 10},
+		}
+	case "qwen":
+		return []hookSpec{
+			{Name: "Stop", Event: "turn-complete", Timeout: 10000, Async: true, Flag: "--skip-active-qwen-stop"},
+			{Name: "PermissionRequest", Event: "approval-required", Timeout: 10000, Async: true},
+			{Name: "Notification", Event: "attention-required", Matcher: "idle_prompt", Timeout: 10000, Async: true},
+		}
+	default:
+		return []hookSpec{
+			{Name: "Stop", Event: "turn-complete", Timeout: 10, Async: true},
+			{Name: "PermissionRequest", Event: "approval-required", Timeout: 10, Async: true},
+		}
+	}
 }
 
 func readRoot(path string) (map[string]any, error) {
@@ -283,11 +329,16 @@ func upsert(value any, agent, event string, want hookGroup) ([]any, bool, error)
 				continue
 			}
 			current, _ := command["command"].(string)
-			if !isOwnedCommand(current, agent, event) {
+			owned := isOwnedCommand(current, agent, event)
+			if agent == "qwen" && event == "turn-complete" {
+				owned = owned || isOwnedCommandWithFlag(current, agent, event, "--skip-active-qwen-stop")
+			}
+			if !owned {
 				continue
 			}
 			wanted := want.Hooks[0]
-			if hookMatches(command, wanted) {
+			matcher, _ := group["matcher"].(string)
+			if hookMatches(command, wanted) && matcher == want.Matcher {
 				return entries, false, nil
 			}
 			command["type"] = wanted.Type
@@ -297,6 +348,11 @@ func upsert(value any, agent, event string, want hookGroup) ([]any, bool, error)
 				command["async"] = true
 			} else {
 				delete(command, "async")
+			}
+			if want.Matcher != "" {
+				group["matcher"] = want.Matcher
+			} else {
+				delete(group, "matcher")
 			}
 			commands[commandIndex] = command
 			group["hooks"] = commands
@@ -311,6 +367,10 @@ func upsert(value any, agent, event string, want hookGroup) ([]any, bool, error)
 }
 
 func isOwnedCommand(command, agent, event string) bool {
+	return isOwnedCommandWithFlag(command, agent, event, "")
+}
+
+func isOwnedCommandWithFlag(command, agent, event, flag string) bool {
 	const separator = "' notify --agent "
 	separatorIndex := strings.LastIndex(command, separator)
 	if separatorIndex <= 0 || !strings.HasPrefix(command, "'") {
@@ -318,6 +378,9 @@ func isOwnedCommand(command, agent, event string) bool {
 	}
 	tail := command[separatorIndex+2:]
 	base := "notify --agent " + agent + " --event " + event + " --ignore-errors"
+	if flag != "" {
+		base += " " + flag
+	}
 	if tail == base {
 		return true
 	}

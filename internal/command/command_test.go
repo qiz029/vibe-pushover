@@ -3,6 +3,7 @@ package command_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -178,6 +179,62 @@ func TestNotifyCommandAppliesConfiguredNotificationProfile(t *testing.T) {
 	}
 }
 
+func TestNotifyCommandSkipsAuggieNonCompletionStop(t *testing.T) {
+	t.Parallel()
+
+	for name, payload := range map[string]string{
+		"interrupted":   `{"agent_stop_cause":"interrupted","workspace_roots":["/tmp/demo"]}`,
+		"missing cause": `{"workspace_roots":["/tmp/demo"]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			called := false
+			httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				called = true
+				return nil, errors.New("unexpected Pushover request")
+			})}
+			app := command.New(command.Options{
+				Stdin:      bytes.NewBufferString(payload),
+				Stdout:     &bytes.Buffer{},
+				Stderr:     &bytes.Buffer{},
+				HTTPClient: httpClient,
+				Endpoint:   "https://pushover.test/messages.json",
+			})
+			if err := app.Run(context.Background(), []string{
+				"vibe-pushover", "notify", "--agent", "auggie", "--event", "turn-complete", "--skip-non-completion",
+			}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if called {
+				t.Fatal("notify sent a Pushover request for a non-completion Auggie stop")
+			}
+		})
+	}
+}
+
+func TestNotifyCommandSkipsQwenActiveStop(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	app := command.New(command.Options{
+		Stdin:  bytes.NewBufferString(`{"stop_hook_active":true,"cwd":"/tmp/demo"}`),
+		Stdout: &bytes.Buffer{},
+		Stderr: &bytes.Buffer{},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			called = true
+			return nil, errors.New("unexpected Pushover request")
+		})},
+		Endpoint: "https://pushover.test/messages.json",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--agent", "qwen", "--event", "turn-complete", "--skip-active-qwen-stop",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if called {
+		t.Fatal("notify sent a Pushover request for an active Qwen Stop re-entry")
+	}
+}
+
 func TestPreviewCommandShowsNotificationWithoutCredentials(t *testing.T) {
 	t.Parallel()
 
@@ -211,8 +268,8 @@ func TestAgentsCommandShowsCapabilities(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"claude", "codex", "copilot", "cursor", "droid", "gemini", "goose", "kimi", "opencode", "pi",
-		"completion+approval", "completion+attention", "completion only",
+		"auggie", "claude", "codex", "copilot", "cursor", "droid", "gemini", "goose", "kimi", "opencode", "pi", "qwen", "vscode", "windsurf",
+		"completion+approval", "completion+approval+attention", "completion+attention", "completion only",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("agents output does not contain %q:\n%s", want, output)

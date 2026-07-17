@@ -28,13 +28,14 @@ func installCopilotHooks(path, executable, pushoverConfig string) (bool, error) 
 
 	for _, spec := range []struct {
 		hookName string
+		agent    string
 		event    string
 		matcher  string
 	}{
-		{hookName: "agentStop", event: "turn-complete"},
-		{hookName: "notification", event: "attention-required", matcher: "permission_prompt|elicitation_dialog"},
+		{hookName: "agentStop", agent: "copilot-vscode", event: "turn-complete"},
+		{hookName: "notification", agent: "copilot", event: "attention-required", matcher: "permission_prompt|elicitation_dialog"},
 	} {
-		command := hookNotifyCommand(executable, "copilot", spec.event, pushoverConfig)
+		command := hookNotifyCommand(executable, spec.agent, spec.event, pushoverConfig)
 		entry := map[string]any{
 			"type":       "command",
 			"bash":       command,
@@ -43,7 +44,7 @@ func installCopilotHooks(path, executable, pushoverConfig string) (bool, error) 
 		if spec.matcher != "" {
 			entry["matcher"] = spec.matcher
 		}
-		updated, entryChanged, err := upsertCopilotHook(hookMap[spec.hookName], spec.event, entry)
+		updated, entryChanged, err := upsertCopilotHook(hookMap[spec.hookName], spec.agent, spec.event, entry)
 		if err != nil {
 			return false, fmt.Errorf("update Copilot %s hook: %w", spec.hookName, err)
 		}
@@ -61,7 +62,7 @@ func installCopilotHooks(path, executable, pushoverConfig string) (bool, error) 
 	return true, nil
 }
 
-func upsertCopilotHook(value any, event string, want map[string]any) ([]any, bool, error) {
+func upsertCopilotHook(value any, agent, event string, want map[string]any) ([]any, bool, error) {
 	var entries []any
 	if value != nil {
 		var ok bool
@@ -76,7 +77,7 @@ func upsertCopilotHook(value any, event string, want map[string]any) ([]any, boo
 			continue
 		}
 		current, _ := entry["bash"].(string)
-		if !isOwnedCommand(current, "copilot", event) {
+		if !isOwnedCopilotCommand(current, agent, event) {
 			continue
 		}
 		if entry["type"] == want["type"] && entry["bash"] == want["bash"] && entry["matcher"] == want["matcher"] && fmt.Sprint(entry["timeoutSec"]) == fmt.Sprint(want["timeoutSec"]) {
@@ -86,6 +87,16 @@ func upsertCopilotHook(value any, event string, want map[string]any) ([]any, boo
 		return entries, true, nil
 	}
 	return append(entries, want), true, nil
+}
+
+func isOwnedCopilotCommand(command, agent, event string) bool {
+	if isOwnedCommand(command, agent, event) {
+		return true
+	}
+	if agent == "copilot-vscode" && event == "turn-complete" {
+		return isOwnedCommand(command, "copilot", event) || isOwnedCommand(command, "vscode", event)
+	}
+	return false
 }
 
 func hookNotifyCommand(executable, agent, event, pushoverConfig string) string {

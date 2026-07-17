@@ -45,15 +45,22 @@ func ApplyProfile(message Message, event Event, profile string) (Message, error)
 
 func Build(agent string, event Event, payload map[string]any) (Message, error) {
 	agent = strings.TrimSpace(agent)
+	if agent == "copilot-vscode" {
+		if stringValue(payload, "hook_event_name") != "" {
+			agent = "VS Code"
+		} else {
+			agent = "Copilot CLI"
+		}
+	}
 	if agent == "" {
 		agent = "agent"
 	}
-	project := projectName(stringValue(payload, "cwd"))
+	project := projectName(payloadWorkingDirectory(payload))
 
 	switch event {
 	case EventTurnComplete:
 		body := "Turn completed."
-		if detail := firstLine(firstString(payload, "last_assistant_message", "prompt_response", "message", "reason")); detail != "" {
+		if detail := completionDetail(agent, payload); detail != "" {
 			body = detail
 		}
 		return Message{
@@ -90,6 +97,49 @@ func Build(agent string, event Event, payload map[string]any) (Message, error) {
 	default:
 		return Message{}, errors.New("event must be turn-complete, approval-required, or attention-required")
 	}
+}
+
+func completionDetail(agent string, payload map[string]any) string {
+	if detail := firstLine(firstString(payload, "last_assistant_message", "prompt_response", "message", "reason")); detail != "" {
+		return detail
+	}
+	if agent == "windsurf" {
+		if toolInfo, ok := payload["tool_info"].(map[string]any); ok {
+			return lastContentLine(stringValue(toolInfo, "response"))
+		}
+	}
+	if agent == "auggie" {
+		if conversation, ok := payload["conversation"].(map[string]any); ok {
+			return firstLine(stringValue(conversation, "agentTextResponse"))
+		}
+	}
+	return ""
+}
+
+func payloadWorkingDirectory(payload map[string]any) string {
+	if cwd := stringValue(payload, "cwd"); cwd != "" {
+		return cwd
+	}
+	if roots, ok := payload["workspace_roots"].([]any); ok && len(roots) > 0 {
+		root, _ := roots[0].(string)
+		return strings.TrimSpace(root)
+	}
+	if roots, ok := payload["workspace_roots"].([]string); ok && len(roots) > 0 {
+		return strings.TrimSpace(roots[0])
+	}
+	return ""
+}
+
+func lastContentLine(value string) string {
+	lines := strings.Split(value, "\n")
+	for index := len(lines) - 1; index >= 0; index-- {
+		line := strings.TrimSpace(lines[index])
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		return strings.Join(strings.Fields(line), " ")
+	}
+	return ""
 }
 
 func firstLine(value string) string {

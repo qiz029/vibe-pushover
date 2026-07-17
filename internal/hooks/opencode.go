@@ -78,6 +78,10 @@ export const VibePushover = async ({ directory }) => ({
 }
 
 func writeGeneratedFile(path string, content []byte, pattern string) error {
+	return writeGeneratedFileMode(path, content, pattern, 0o600)
+}
+
+func writeGeneratedFileMode(path string, content []byte, pattern string, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create plugin directory: %w", err)
 	}
@@ -87,7 +91,7 @@ func writeGeneratedFile(path string, content []byte, pattern string) error {
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
-	if err := tmp.Chmod(0o600); err != nil {
+	if err := tmp.Chmod(mode); err != nil {
 		tmp.Close()
 		return fmt.Errorf("set plugin permissions: %w", err)
 	}

@@ -141,6 +141,60 @@ func TestBuildGeminiCompletionUsesPromptResponse(t *testing.T) {
 	}
 }
 
+func TestBuildWindsurfCompletionUsesLastResponseLine(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("windsurf", notification.EventTurnComplete, map[string]any{
+		"cwd": "/tmp/demo",
+		"tool_info": map[string]any{
+			"response": "### Planner Response\n\nI'll help you create that file.\n\n*Created file `/tmp/demo/main.go`*\n\n### Planner Response\n\nThe file has been created successfully.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Title != "✓ Windsurf finished · demo" || got.Body != "The file has been created successfully." {
+		t.Fatalf("Windsurf notification = %#v", got)
+	}
+}
+
+func TestBuildAuggieCompletionUsesConversationAndWorkspaceRoot(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("auggie", notification.EventTurnComplete, map[string]any{
+		"agent_stop_cause": "end_turn",
+		"workspace_roots":  []any{"/tmp/demo"},
+		"conversation": map[string]any{
+			"agentTextResponse": "Implemented the requested changes.\nAll tests pass.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Title != "✓ Auggie finished · demo" || got.Body != "Implemented the requested changes." {
+		t.Fatalf("Auggie notification = %#v", got)
+	}
+}
+
+func TestBuildDetectsSharedCopilotAndVSCodeSource(t *testing.T) {
+	t.Parallel()
+
+	for name, payload := range map[string]map[string]any{
+		"Copilot CLI": {"sessionId": "copilot-session", "cwd": "/tmp/demo"},
+		"VS Code":     {"hook_event_name": "Stop", "session_id": "vscode-session", "cwd": "/tmp/demo"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := notification.Build("copilot-vscode", notification.EventTurnComplete, payload)
+			if err != nil {
+				t.Fatalf("Build() error = %v", err)
+			}
+			if !strings.HasPrefix(got.Title, "✓ "+name+" finished") {
+				t.Fatalf("title = %q, want %s source", got.Title, name)
+			}
+		})
+	}
+}
+
 func TestApplyQuietProfileSilencesApproval(t *testing.T) {
 	t.Parallel()
 
