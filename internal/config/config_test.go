@@ -114,8 +114,17 @@ func TestRejectsUnknownNotificationDetail(t *testing.T) {
 	t.Parallel()
 
 	err := (config.Credentials{AppToken: "app", UserKey: "user", NotificationDetail: "everything"}).Validate()
-	if err == nil || !strings.Contains(err.Error(), "notification detail must be summary or minimal") {
+	if err == nil || !strings.Contains(err.Error(), "notification detail must be summary, minimal, or private") {
 		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestAcceptsPrivateNotificationDetail(t *testing.T) {
+	t.Parallel()
+
+	credentials := config.Credentials{AppToken: "app", UserKey: "user", NotificationDetail: "private"}
+	if err := credentials.Validate(); err != nil {
+		t.Fatalf("Validate() rejected private notification detail: %v", err)
 	}
 }
 

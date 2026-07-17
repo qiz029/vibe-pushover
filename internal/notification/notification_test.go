@@ -430,6 +430,27 @@ func TestApplyDetailMinimalHidesHookPayloadContent(t *testing.T) {
 	}
 }
 
+func TestApplyDetailPrivateHidesLockScreenContextAndAction(t *testing.T) {
+	t.Parallel()
+
+	message := notification.Message{
+		Title:    "✓ Autohand Code finished · private · project",
+		Body:     "Implemented confidential authentication changes.",
+		URL:      "https://example.com/private-session",
+		URLTitle: "Open result",
+	}
+	got, err := notification.ApplyDetail(message, notification.EventTurnComplete, "private")
+	if err != nil {
+		t.Fatalf("ApplyDetail() error = %v", err)
+	}
+	if got.Title != "✓ Autohand Code finished" || got.Body != "Turn completed." {
+		t.Fatalf("private title/body = %q / %q", got.Title, got.Body)
+	}
+	if got.URL != "" || got.URLTitle != "" {
+		t.Fatalf("private detail kept supplementary action: %#v", got)
+	}
+}
+
 func TestBuildAttentionNotification(t *testing.T) {
 	t.Parallel()
 
@@ -530,6 +551,7 @@ func TestBuildUsesProductNamesInNotificationTitles(t *testing.T) {
 	t.Parallel()
 
 	for agent, want := range map[string]string{
+		"autohand":  "✓ Autohand Code finished · demo",
 		"craft":     "✓ Craft Agents finished · demo",
 		"cortex":    "✓ Cortex Code finished · demo",
 		"dotcraft":  "✓ DotCraft finished · demo",

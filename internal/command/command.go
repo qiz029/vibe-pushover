@@ -540,7 +540,7 @@ func detailCommand(options Options) *cli.Command {
 	return &cli.Command{
 		Name:      "detail",
 		Usage:     "show or change how much hook detail notifications include",
-		ArgsUsage: "[summary|minimal]",
+		ArgsUsage: "[summary|minimal|private]",
 		Flags:     []cli.Flag{configFlag()},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			path, err := configPath(cmd.String("config"))
@@ -798,8 +798,8 @@ func setupCommand(options Options) *cli.Command {
 				profile = ""
 			}
 			detail, err := prompter.readChoice(
-				"Notification detail [summary/minimal] (summary): ",
-				"summary", "summary", "minimal",
+				"Notification detail [summary/minimal/private] (summary): ",
+				"summary", "summary", "minimal", "private",
 			)
 			if err != nil {
 				return err

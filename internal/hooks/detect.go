@@ -28,6 +28,7 @@ func DetectedAgents() ([]AgentInfo, error) {
 		"aider":       {filepath.Join(home, ".aider"), filepath.Join(home, ".aider.conf.yml")},
 		"amp":         {filepath.Join(home, ".config", "amp")},
 		"antigravity": {filepath.Join(home, ".gemini", "antigravity-cli")},
+		"autohand":    {filepath.Join(home, ".autohand")},
 		"auggie":      {filepath.Join(home, ".augment")},
 		"claude":      {filepath.Join(home, ".claude")},
 		"cline":       {filepath.Join(home, "Documents", "Cline"), filepath.Join(home, ".cline")},
@@ -106,6 +107,10 @@ func overrideDetectionMarkers(agent string, resolvedPaths []string) ([]string, e
 	levels := 0
 	markers := make([]string, 0, len(resolvedPaths)+1)
 	switch agent {
+	case "autohand":
+		if os.Getenv("AUTOHAND_CONFIG") != "" {
+			levels = 1
+		}
 	case "cline":
 		// Cline's Documents directory can be redirected independently of HOME.
 		levels = 2

@@ -517,6 +517,25 @@ func TestSetupCommandStoresInteractiveNotificationDetail(t *testing.T) {
 	}
 }
 
+func TestSetupCommandStoresInteractivePrivateNotificationDetail(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	app := command.New(command.Options{
+		Stdin: bytes.NewBufferString("app-token\nuser-key\nbalanced\nprivate\nall\n"), Stdout: &bytes.Buffer{},
+	})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "setup", "--config", path}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.NotificationDetail != "private" {
+		t.Fatalf("NotificationDetail = %q, want private", got.NotificationDetail)
+	}
+}
+
 func TestSetupCommandNormalizesAllTargetDevicesToBroadcast(t *testing.T) {
 	t.Parallel()
 
@@ -897,6 +916,43 @@ func TestNotifyCommandMinimalDetailHidesHookPayloadContent(t *testing.T) {
 	}
 	if strings.Contains(body, "deploy") || strings.Contains(body, "secret-service") {
 		t.Fatalf("minimal detail leaked hook payload: %q", body)
+	}
+}
+
+func TestNotifyCommandPrivateDetailHidesProjectAndSupplementaryAction(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", NotificationDetail: "private",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	t.Setenv("AUTOHAND_EVENT", `{"cwd":"/tmp/private-project","response":"Sensitive response","url":"https://example.com/private-session"}`)
+	var title, body, rawURL, urlTitle string
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if err := r.ParseForm(); err != nil {
+				t.Fatalf("ParseForm() error = %v", err)
+			}
+			title = r.Form.Get("title")
+			body = r.Form.Get("message")
+			rawURL = r.Form.Get("url")
+			urlTitle = r.Form.Get("url_title")
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"status":1}`)), Header: make(http.Header)}, nil
+		})},
+		Endpoint: "https://pushover.test/messages.json",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--config", path, "--agent", "autohand", "--event", "turn-complete",
+		"--payload-env", "AUTOHAND_EVENT",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if title != "✓ Autohand Code finished" || body != "Turn completed." {
+		t.Fatalf("private title/body = %q / %q", title, body)
+	}
+	if rawURL != "" || urlTitle != "" {
+		t.Fatalf("private notification kept action %q / %q", rawURL, urlTitle)
 	}
 }
 
@@ -1867,7 +1923,7 @@ func TestAgentsCommandShowsCapabilities(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"aider", "amp", "antigravity", "auggie", "claude", "cline", "codebuddy", "codewhale", "codex", "copilot", "craft", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "junie", "kimi", "kiro", "mimo", "mistral", "omp", "openhands", "opencode", "pi", "qoder", "qwen", "rovo", "tabnine", "trae", "vscode", "windsurf", "workbuddy", "zcode",
+		"aider", "amp", "antigravity", "autohand", "auggie", "claude", "cline", "codebuddy", "codewhale", "codex", "copilot", "craft", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "junie", "kimi", "kiro", "mimo", "mistral", "omp", "openhands", "opencode", "pi", "qoder", "qwen", "rovo", "tabnine", "trae", "vscode", "windsurf", "workbuddy", "zcode",
 		"completion+approval", "completion+approval+attention", "completion+attention", "completion only",
 	} {
 		if !strings.Contains(output, want) {
@@ -1879,6 +1935,7 @@ func TestAgentsCommandShowsCapabilities(t *testing.T) {
 func TestAgentsCommandCanShowOnlyDetectedAgents(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("AUTOHAND_CONFIG", "")
 	for _, marker := range []string{".codex", ".zcode"} {
 		if err := os.MkdirAll(filepath.Join(home, marker), 0o700); err != nil {
 			t.Fatalf("MkdirAll(%q) error = %v", marker, err)
@@ -2593,8 +2650,10 @@ func TestInstallCommandConfiguresDetectedAgents(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("AUTOHAND_CONFIG", "")
 	t.Setenv("CRAFT_CONFIG_DIR", "")
 	for _, path := range []string{
+		filepath.Join(home, ".autohand"),
 		filepath.Join(home, ".codex"),
 		filepath.Join(home, ".craft-agent", "workspaces", "work"),
 		filepath.Join(home, ".zcode", "cli"),
@@ -2614,7 +2673,7 @@ func TestInstallCommandConfiguresDetectedAgents(t *testing.T) {
 	if err := app.Run(context.Background(), []string{"vibe-pushover", "install", "--detected"}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	for _, want := range []string{"Installed codex hooks", "Installed craft automations", "Installed zcode hooks"} {
+	for _, want := range []string{"Installed autohand hooks", "Installed codex hooks", "Installed craft automations", "Installed zcode hooks"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("install output does not contain %q: %q", want, stdout.String())
 		}
@@ -2623,6 +2682,7 @@ func TestInstallCommandConfiguresDetectedAgents(t *testing.T) {
 		path    string
 		command string
 	}{
+		{filepath.Join(home, ".autohand", "config.json"), "notify --agent autohand --event turn-complete"},
 		{filepath.Join(home, ".codex", "hooks.json"), "notify --agent codex --event turn-complete"},
 		{filepath.Join(home, ".craft-agent", "workspaces", "work", "automations.json"), "notify --agent craft --event turn-complete"},
 		{filepath.Join(home, ".zcode", "cli", "config.json"), "notify --agent zcode --event turn-complete"},

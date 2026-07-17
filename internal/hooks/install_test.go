@@ -49,6 +49,31 @@ func TestDefaultPathGajaeConfigDirIsRelativeToHome(t *testing.T) {
 	}
 }
 
+func TestDefaultPathAutohandHonorsExplicitConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AUTOHAND_CONFIG", "~/profiles/autohand.json")
+
+	got, err := hooks.DefaultPath("autohand")
+	if err != nil {
+		t.Fatalf("DefaultPath() error = %v", err)
+	}
+	want := filepath.Join(home, "profiles", "autohand.json")
+	if got != want {
+		t.Fatalf("DefaultPath() = %q, want %q", got, want)
+	}
+
+	t.Setenv("AUTOHAND_CONFIG", "")
+	got, err = hooks.DefaultPath("autohand")
+	if err != nil {
+		t.Fatalf("DefaultPath(default) error = %v", err)
+	}
+	want = filepath.Join(home, ".autohand", "config.json")
+	if got != want {
+		t.Fatalf("DefaultPath(default) = %q, want %q", got, want)
+	}
+}
+
 func TestDefaultPathsCraftFindsEveryWorkspaceAndHonorsConfigDir(t *testing.T) {
 	configDir := filepath.Join(t.TempDir(), "craft-config")
 	t.Setenv("CRAFT_CONFIG_DIR", configDir)
@@ -86,6 +111,7 @@ func TestDetectedAgentsFindsEverySupportedConfigHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("AUTOHAND_CONFIG", "")
 	t.Setenv("CRAFT_CONFIG_DIR", "")
 	vscodeMarker := filepath.Join(".config", "Code", "User")
 	switch runtime.GOOS {
@@ -98,6 +124,7 @@ func TestDetectedAgentsFindsEverySupportedConfigHome(t *testing.T) {
 		".aider",
 		filepath.Join(".config", "amp"),
 		filepath.Join(".gemini", "antigravity-cli"),
+		".autohand",
 		".augment",
 		".claude",
 		filepath.Join("Documents", "Cline"),
@@ -192,6 +219,7 @@ func TestDetectedAgentsHonorsSupportedConfigOverrides(t *testing.T) {
 
 	overrideRoot := t.TempDir()
 	values := map[string]string{
+		"AUTOHAND_CONFIG":       filepath.Join(overrideRoot, "autohand", "config.json"),
 		"CLINE_DIR":             filepath.Join(overrideRoot, "cline"),
 		"CODEWHALE_CONFIG_PATH": filepath.Join(overrideRoot, "codewhale", "config.toml"),
 		"COPILOT_HOME":          filepath.Join(overrideRoot, "copilot"),
@@ -212,7 +240,7 @@ func TestDetectedAgentsHonorsSupportedConfigOverrides(t *testing.T) {
 	}
 	for name, value := range values {
 		marker := value
-		if name == "CODEWHALE_CONFIG_PATH" {
+		if name == "AUTOHAND_CONFIG" || name == "CODEWHALE_CONFIG_PATH" {
 			marker = filepath.Dir(value)
 		}
 		if err := os.MkdirAll(marker, 0o700); err != nil {
@@ -228,7 +256,7 @@ func TestDetectedAgentsHonorsSupportedConfigOverrides(t *testing.T) {
 	for _, agent := range detected {
 		names[agent.Name] = true
 	}
-	for _, want := range []string{"cline", "codewhale", "copilot", "gajae", "gemini", "grok", "hermes", "kimi", "mimo", "mistral", "vscode"} {
+	for _, want := range []string{"autohand", "cline", "codewhale", "copilot", "gajae", "gemini", "grok", "hermes", "kimi", "mimo", "mistral", "vscode"} {
 		if !names[want] {
 			t.Errorf("DetectedAgents() omitted %q with its supported override: %#v", want, detected)
 		}
@@ -1414,6 +1442,116 @@ func TestInstallCraftRepairsOwnedActionPermissionMode(t *testing.T) {
 	}
 	if changed {
 		t.Fatal("second Install() changed repaired Craft automation")
+	}
+}
+
+func TestInstallAutohandAddsLifecycleHooksWithoutChangingExistingConfig(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	original := `{"theme":"keep","hooks":{"on_agent_response":["personal-response"],"on_permission_request":[{"command":"personal-approval","async":false}],"custom_event":["keep-custom"]}}`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	changed, err := hooks.Install("autohand", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var got struct {
+		Theme string           `json:"theme"`
+		Hooks map[string][]any `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if got.Theme != "keep" || len(got.Hooks["custom_event"]) != 1 || got.Hooks["custom_event"][0] != "keep-custom" {
+		t.Fatalf("Autohand install changed unrelated config: %s", data)
+	}
+	wants := map[string]string{
+		"on_agent_response":     "turn-complete",
+		"on_permission_request": "approval-required",
+		"on_error":              "attention-required",
+	}
+	for hookName, event := range wants {
+		entries := got.Hooks[hookName]
+		wantCount := 1
+		if hookName != "on_error" {
+			wantCount = 2
+		}
+		if len(entries) != wantCount {
+			t.Fatalf("Autohand %s entries = %#v", hookName, entries)
+		}
+		var owned map[string]any
+		for _, entry := range entries {
+			candidate, _ := entry.(map[string]any)
+			if strings.Contains(fmt.Sprint(candidate["command"]), "notify --agent autohand --event "+event) {
+				owned = candidate
+			}
+		}
+		if owned == nil {
+			t.Fatalf("Autohand %s has no owned notifier: %#v", hookName, entries)
+		}
+		command := fmt.Sprint(owned["command"])
+		if !strings.Contains(command, "--ignore-errors --no-input") || !strings.Contains(command, "--config '/tmp/pushover.json'") {
+			t.Fatalf("Autohand %s command = %q", hookName, command)
+		}
+		if owned["async"] != true || owned["timeout"] != float64(10000) {
+			t.Fatalf("Autohand %s notifier = %#v", hookName, owned)
+		}
+	}
+
+	changed, err = hooks.Install("autohand", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed Autohand hooks")
+	}
+}
+
+func TestInstallAutohandPreservesConfigSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior is platform-specific")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "shared-autohand.json")
+	path := filepath.Join(dir, ".autohand", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(target, []byte(`{"theme":"keep"}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+
+	if _, err := hooks.Install("autohand", path, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("Lstat() error = %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("Install() replaced Autohand config symlink")
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("ReadFile(target) error = %v", err)
+	}
+	if !bytes.Contains(data, []byte(`"on_agent_response"`)) || !bytes.Contains(data, []byte(`"theme": "keep"`)) {
+		t.Fatalf("symlink target not updated or sibling config lost: %s", data)
 	}
 }
 

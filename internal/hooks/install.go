@@ -23,6 +23,7 @@ var agentCatalog = []AgentInfo{
 	{Name: "aider", DisplayName: "Aider", Capabilities: "completion only (macOS/Linux)", Resource: "config+script"},
 	{Name: "amp", DisplayName: "Amp", Capabilities: "completion+approval+attention", Resource: "plugin"},
 	{Name: "antigravity", DisplayName: "Antigravity CLI", Capabilities: "completion+attention", Resource: "plugin"},
+	{Name: "autohand", DisplayName: "Autohand Code", Capabilities: "completion+approval+attention", Resource: "hooks"},
 	{Name: "auggie", DisplayName: "Augment Auggie", Capabilities: "completion only", Resource: "hooks+script"},
 	{Name: "claude", DisplayName: "Claude Code", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "cline", DisplayName: "Cline", Capabilities: "completion only", Resource: "hooks"},
@@ -87,6 +88,15 @@ type hookSpec struct {
 }
 
 func DefaultPath(agent string) (string, error) {
+	if agent == "autohand" {
+		if configPath := strings.TrimSpace(os.Getenv("AUTOHAND_CONFIG")); configPath != "" {
+			configPath, err := expandHome(configPath)
+			if err != nil {
+				return "", fmt.Errorf("resolve Autohand config path: %w", err)
+			}
+			return configPath, nil
+		}
+	}
 	if agent == "craft" {
 		paths, err := defaultCraftPaths()
 		if err != nil {
@@ -231,6 +241,8 @@ func DefaultPath(agent string) (string, error) {
 		return filepath.Join(home, ".config", "amp", "plugins", "vibe-pushover.ts"), nil
 	case "antigravity":
 		return filepath.Join(home, ".gemini", "antigravity-cli", "plugins", "vibe-pushover"), nil
+	case "autohand":
+		return filepath.Join(home, ".autohand", "config.json"), nil
 	case "auggie":
 		return filepath.Join(home, ".augment", "settings.json"), nil
 	case "codebuddy":
@@ -401,6 +413,9 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	}
 	if agent == "antigravity" {
 		return installAntigravityPlugin(path, executable, pushoverConfig)
+	}
+	if agent == "autohand" {
+		return installAutohandHooks(path, executable, pushoverConfig)
 	}
 	if agent == "auggie" {
 		return installAuggieHooks(path, executable, pushoverConfig)

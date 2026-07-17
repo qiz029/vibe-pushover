@@ -114,9 +114,9 @@ func (c Credentials) Validate() error {
 		return fmt.Errorf("notification profile must be balanced, quiet, urgent, or watch, got %q", c.NotificationProfile)
 	}
 	switch c.NotificationDetail {
-	case "", "summary", "minimal":
+	case "", "summary", "minimal", "private":
 	default:
-		return fmt.Errorf("notification detail must be summary or minimal, got %q", c.NotificationDetail)
+		return fmt.Errorf("notification detail must be summary, minimal, or private, got %q", c.NotificationDetail)
 	}
 	if c.SnoozedUntil != "" {
 		if _, err := time.Parse(time.RFC3339Nano, c.SnoozedUntil); err != nil {

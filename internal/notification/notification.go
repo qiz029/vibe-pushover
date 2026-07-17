@@ -56,7 +56,7 @@ func ApplyDetail(message Message, event Event, detail string) (Message, error) {
 	switch detail {
 	case "", "summary":
 		return message, nil
-	case "minimal":
+	case "minimal", "private":
 		switch event {
 		case EventTurnComplete:
 			message.Body = "Turn completed."
@@ -67,9 +67,16 @@ func ApplyDetail(message Message, event Event, detail string) (Message, error) {
 		default:
 			return Message{}, errors.New("event must be turn-complete, approval-required, or attention-required")
 		}
+		if detail == "private" {
+			if separator := strings.Index(message.Title, " · "); separator >= 0 {
+				message.Title = message.Title[:separator]
+			}
+			message.URL = ""
+			message.URLTitle = ""
+		}
 		return message, nil
 	default:
-		return Message{}, fmt.Errorf("notification detail must be summary or minimal, got %q", detail)
+		return Message{}, fmt.Errorf("notification detail must be summary, minimal, or private, got %q", detail)
 	}
 }
 
@@ -290,6 +297,7 @@ func firstLine(value string) string {
 func displayName(value string) string {
 	if name, ok := map[string]string{
 		"antigravity":   "Antigravity",
+		"autohand":      "Autohand Code",
 		"codebuddy":     "CodeBuddy",
 		"codewhale":     "CodeWhale",
 		"craft":         "Craft Agents",

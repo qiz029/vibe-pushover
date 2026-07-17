@@ -5,7 +5,7 @@
 - finishes a turn;
 - needs manual approval or otherwise needs your attention.
 
-The CLI currently integrates with 39 coding agents: Aider, Amp, Antigravity CLI, Augment Auggie, Claude Code, Cline, CodeBuddy Code, CodeWhale (formerly DeepSeek-TUI), Codex CLI, GitHub Copilot CLI, Craft Agents, Snowflake Cortex Code, Cursor, Factory Droid, DotCraft, Gajae Code, Gemini CLI, Goose, Grok Build, Hermes Agent, JetBrains Junie CLI, Kimi Code CLI, Kiro, Kilo Code, MiMo Code, Mistral Vibe, Oh My Pi, OpenHands CLI, OpenCode, Pi, Qoder, Qwen Code, Rovo Dev CLI, Tabnine CLI, TRAE, VS Code Agent, Windsurf, WorkBuddy, and ZCode. It is written in Go and uses [`urfave/cli`](https://github.com/urfave/cli).
+The CLI currently integrates with 40 coding agents: Aider, Amp, Antigravity CLI, Autohand Code, Augment Auggie, Claude Code, Cline, CodeBuddy Code, CodeWhale (formerly DeepSeek-TUI), Codex CLI, GitHub Copilot CLI, Craft Agents, Snowflake Cortex Code, Cursor, Factory Droid, DotCraft, Gajae Code, Gemini CLI, Goose, Grok Build, Hermes Agent, JetBrains Junie CLI, Kimi Code CLI, Kiro, Kilo Code, MiMo Code, Mistral Vibe, Oh My Pi, OpenHands CLI, OpenCode, Pi, Qoder, Qwen Code, Rovo Dev CLI, Tabnine CLI, TRAE, VS Code Agent, Windsurf, WorkBuddy, and ZCode. It is written in Go and uses [`urfave/cli`](https://github.com/urfave/cli).
 
 ## Install
 
@@ -48,7 +48,7 @@ vibe-pushover setup
 Pushover application token:
 Pushover user/group key:
 Notification profile [balanced/quiet/urgent/watch] (balanced):
-Notification detail [summary/minimal] (summary):
+Notification detail [summary/minimal/private] (summary):
 Target Pushover device(s), comma-separated (all; groups may ignore):
 Saved Pushover credentials to ...
 ```
@@ -83,6 +83,7 @@ vibe-pushover profile urgent
 
 vibe-pushover detail
 vibe-pushover detail minimal
+vibe-pushover detail private
 vibe-pushover detail summary
 
 vibe-pushover device
@@ -91,7 +92,7 @@ vibe-pushover device iphone,ipad
 vibe-pushover device all
 ```
 
-`detail summary` keeps the compact first useful line, tool command, or failure reason in the notification body. `detail minimal` replaces hook-provided body content with an event-only message such as `Turn completed.` or `Approval requested.` while retaining the agent and project in the title. This is useful when notifications are visible on a phone or watch lock screen. Existing configurations default to `summary`.
+`detail summary` keeps the compact first useful line, tool command, or failure reason in the notification body. `detail minimal` replaces hook-provided body content with an event-only message such as `Turn completed.` or `Approval requested.` while retaining the agent and project in the title. `detail private` also removes the project name and supplementary action URL, leaving only the agent and event on a phone or watch lock screen. Existing configurations default to `summary`.
 
 Temporarily pause every hook notification without changing the permanent profile:
 
@@ -162,6 +163,7 @@ vibe-pushover agents
 vibe-pushover agents --detected
 vibe-pushover install --detected
 vibe-pushover install --agent antigravity
+vibe-pushover install --agent autohand
 vibe-pushover install --agent cline
 vibe-pushover install --agent codebuddy
 vibe-pushover install --agent codewhale
@@ -194,6 +196,7 @@ vibe-pushover install --agent zcode
 | Aider | completion (macOS/Linux) | `~/.aider.conf.yml` plus `~/.aider/vibe-pushover-notify.sh` |
 | Amp | completion, approval, error attention | `~/.config/amp/plugins/vibe-pushover.ts` |
 | Antigravity CLI | completion, failure attention | `~/.gemini/antigravity-cli/plugins/vibe-pushover/` |
+| Autohand Code | completion, approval, error attention | `$AUTOHAND_CONFIG` or `~/.autohand/config.json` |
 | Augment Auggie | completion (macOS/Linux) | `~/.augment/settings.json` plus `~/.augment/hooks/vibe-pushover.sh` |
 | Claude Code | completion, approval | `~/.claude/settings.json` |
 | Cline | completion | `<Documents>/Cline/Hooks/TaskComplete` (`TaskComplete.ps1` on Windows); when Windows My Documents or Linux XDG Documents is redirected, also `$CLINE_DIR/hooks/TaskComplete[.ps1]` or `~/.cline/hooks/TaskComplete[.ps1]` for CLI |
@@ -244,6 +247,8 @@ Kimi loads the new TOML hooks when a new session starts; its `Stop` event does n
 Junie CLI uses its official [`Stop`, `StopFailure`, and `PermissionRequest` hooks](https://junie.jetbrains.com/docs/junie-cli-hooks.html). Completion and approval commands are installed as `async` observational hooks: this keeps notification delivery off the task's critical path and, critically, prevents Junie's `PermissionRequest` hook semantics from auto-approving the sensitive action. Re-entered `Stop` calls after another hook blocks completion are filtered. `StopFailure` reports classified model/API failures such as rate limits or authentication errors, including a compact failure detail. The hooks currently require Junie's Early Access build and are not invoked by Junie's ACP or server hosts.
 
 Craft Agents uses its official per-workspace [`automations.json`](https://agents.craft.do/docs/automations/overview) command actions. Installation discovers every existing workspace, respects `CRAFT_CONFIG_DIR`, and merges `Stop` completion plus `Notification` matchers for `permission_prompt` and `idle_prompt`; it does not install a `PermissionRequest` action that could participate in the approval decision. Each fixed notification command runs in the documented `allow-all` automation mode so Craft does not stop to approve its own notifier. Existing automations and workspace settings are preserved, symlinked automation files remain symlinks, changes load without a restart, and a later workspace can be configured by rerunning `install --agent craft` or targeting its file with `--agent-config`.
+
+Autohand Code uses its official [`on_agent_response`, `on_permission_request`, and `on_error` hooks](https://docs.autohand.ai/working-with-autohand-code/hooks) for completion, approval, and error attention. The installed actions are asynchronous and use the hook's project working directory without interpolating response, command, or error text into a shell command. This keeps the integration observational and avoids template-driven shell injection; Autohand notifications therefore use compact generic bodies while still showing the project under `summary` and `minimal`. Installation respects `AUTOHAND_CONFIG`, preserves unrelated settings and third-party hooks, and updates symlink targets without replacing the symlink.
 
 Antigravity CLI installs a native plugin with its documented [`Stop` hook](https://antigravity.google/docs/hooks). A `model_stop` is reported as completion only after `fullyIdle` becomes true; stops with background work are ignored, while `error` and `max_steps_exceeded` become attention notifications. The current hook surface has no approval event. CodeBuddy Code uses its documented [beta hooks](https://www.codebuddy.ai/docs/cli/hooks): `Stop`, `StopFailure`, and `PermissionRequest` become completion, attention, and approval notifications respectively. Re-entered active `Stop` hooks are filtered, but CodeBuddy runs Stop hooks in parallel and exposes no later finalized-stop event; if another Stop hook rejects stopping, the first completion notification can arrive before that continuation finishes. WorkBuddy uses the same lifecycle hook runtime with the independent `.workbuddy` configuration home introduced in its [v2.48.0 release](https://www.workbuddy.ai/docs/cli/release-notes/v2.48.0), so it receives the same three notification types without modifying CodeBuddy settings. CodeWhale, the project formerly named DeepSeek-TUI, uses its native `turn_end` and `on_error` hooks from [`~/.codewhale/config.toml`](https://github.com/Hmbown/CodeWhale); only `turn_end` payloads with `status = "completed"` become completion notifications, while errors are reported by `on_error`. Its current config resolution remains compatible with legacy `~/.deepseek/config.toml`, and it has no separate configurable approval event. An explicit `[hooks] enabled = false` remains respected; set it to `true` to activate installed CodeWhale hooks. These installers retain unrelated hooks and only update entries they can identify as owned by `vibe-pushover`.
 
@@ -303,7 +308,7 @@ Notifications are intentionally compact for phones and watches:
 - An attention notification uses a title such as `⚠ Droid needs attention · vibe-pushover`, carries a compact reason, and uses the same high-priority delivery as an approval request.
 - If a hook payload supplies an HTTP(S) `url`, `session_url`, `web_url`, or `details_url`, the notification includes Pushover's supplementary `Open result` or `Open agent` action. Unsafe and local-only URL schemes are ignored.
 - By default Pushover delivers to every active device on the account. `setup` or `vibe-pushover device ...` can restrict delivery to one or more named devices without changing the agent hooks.
-- `detail minimal` hides hook-provided summaries, commands, and error reasons from the body while keeping the agent/event/project title and any safe supplementary action. `detail summary` restores the compact contextual body.
+- `detail minimal` hides hook-provided summaries, commands, and error reasons from the body while keeping the agent/event/project title and any safe supplementary action. `detail private` additionally hides the project and removes supplementary action URLs. `detail summary` restores the compact contextual body.
 
 Hook delivery also suppresses exact repeats for three seconds across CLI processes. The fingerprint includes the agent, event, a non-secret hash of the Pushover destination, rendered notification fields, and stable session/turn/tool IDs when available. A failed Pushover request releases its reservation so a later hook can retry; an unavailable or corrupt dedupe cache fails open and sends the notification with a warning. The private cache is stored at `~/Library/Caches/vibe-pushover/dedupe.json` on macOS or `$XDG_CACHE_HOME/vibe-pushover/dedupe.json` on Linux.
 
