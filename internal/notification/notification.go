@@ -183,6 +183,15 @@ func firstLine(value string) string {
 }
 
 func displayName(value string) string {
+	if name, ok := map[string]string{
+		"cortex":   "Cortex Code",
+		"omp":      "Oh My Pi",
+		"opencode": "OpenCode",
+		"qwen":     "Qwen Code",
+		"vscode":   "VS Code",
+	}[strings.ToLower(value)]; ok {
+		return name
+	}
 	runes := []rune(value)
 	if len(runes) == 0 {
 		return "Agent"

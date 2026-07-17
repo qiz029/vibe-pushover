@@ -312,6 +312,26 @@ func TestBuildDetectsSharedCopilotAndVSCodeSource(t *testing.T) {
 	}
 }
 
+func TestBuildUsesProductNamesInNotificationTitles(t *testing.T) {
+	t.Parallel()
+
+	for agent, want := range map[string]string{
+		"cortex":   "✓ Cortex Code finished · demo",
+		"omp":      "✓ Oh My Pi finished · demo",
+		"opencode": "✓ OpenCode finished · demo",
+		"qwen":     "✓ Qwen Code finished · demo",
+		"vscode":   "✓ VS Code finished · demo",
+	} {
+		got, err := notification.Build(agent, notification.EventTurnComplete, map[string]any{"cwd": "/tmp/demo"})
+		if err != nil {
+			t.Fatalf("Build(%q) error = %v", agent, err)
+		}
+		if got.Title != want {
+			t.Errorf("Build(%q) title = %q, want %q", agent, got.Title, want)
+		}
+	}
+}
+
 func TestApplyQuietProfileSilencesApproval(t *testing.T) {
 	t.Parallel()
 

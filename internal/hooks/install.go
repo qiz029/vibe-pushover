@@ -25,6 +25,7 @@ var agentCatalog = []AgentInfo{
 	{Name: "claude", DisplayName: "Claude Code", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "codex", DisplayName: "Codex CLI", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "copilot", DisplayName: "GitHub Copilot CLI", Capabilities: "completion+attention", Resource: "hooks"},
+	{Name: "cortex", DisplayName: "Snowflake Cortex Code", Capabilities: "completion+approval", Resource: "hooks (preview)"},
 	{Name: "cursor", DisplayName: "Cursor", Capabilities: "completion only", Resource: "hooks"},
 	{Name: "droid", DisplayName: "Factory Droid", Capabilities: "completion+attention", Resource: "hooks"},
 	{Name: "gemini", DisplayName: "Gemini CLI", Capabilities: "completion only", Resource: "hooks"},
@@ -32,6 +33,7 @@ var agentCatalog = []AgentInfo{
 	{Name: "hermes", DisplayName: "Hermes Agent", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "kimi", DisplayName: "Kimi Code CLI", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "kiro", DisplayName: "Kiro", Capabilities: "completion only (macOS/Linux)", Resource: "hooks"},
+	{Name: "omp", DisplayName: "Oh My Pi", Capabilities: "completion+approval", Resource: "extension"},
 	{Name: "opencode", DisplayName: "OpenCode", Capabilities: "completion+approval", Resource: "plugin"},
 	{Name: "pi", DisplayName: "Pi", Capabilities: "completion only", Resource: "extension"},
 	{Name: "qoder", DisplayName: "Qoder", Capabilities: "completion only", Resource: "hooks"},
@@ -102,6 +104,15 @@ func DefaultPath(agent string) (string, error) {
 			return filepath.Join(agentDir, "extensions", "vibe-pushover", "index.ts"), nil
 		}
 	}
+	if agent == "omp" {
+		if agentDir := os.Getenv("PI_CODING_AGENT_DIR"); agentDir != "" {
+			agentDir, err := expandHome(agentDir)
+			if err != nil {
+				return "", fmt.Errorf("resolve Oh My Pi agent directory: %w", err)
+			}
+			return filepath.Join(agentDir, "extensions", "vibe-pushover", "index.ts"), nil
+		}
+	}
 	if agent == "hermes" {
 		if hermesHome := os.Getenv("HERMES_HOME"); hermesHome != "" {
 			hermesHome, err := expandHome(hermesHome)
@@ -127,6 +138,8 @@ func DefaultPath(agent string) (string, error) {
 		return filepath.Join(home, ".codex", "hooks.json"), nil
 	case "copilot":
 		return filepath.Join(home, ".copilot", "hooks", "vibe-pushover.json"), nil
+	case "cortex":
+		return filepath.Join(home, ".snowflake", "cortex", "hooks.json"), nil
 	case "claude":
 		return filepath.Join(home, ".claude", "settings.json"), nil
 	case "cursor":
@@ -143,6 +156,8 @@ func DefaultPath(agent string) (string, error) {
 		return filepath.Join(home, ".kimi-code", "config.toml"), nil
 	case "kiro":
 		return filepath.Join(home, ".kiro", "hooks", "vibe-pushover.json"), nil
+	case "omp":
+		return filepath.Join(home, ".omp", "agent", "extensions", "vibe-pushover", "index.ts"), nil
 	case "opencode":
 		configDir := os.Getenv("XDG_CONFIG_HOME")
 		if configDir == "" {
@@ -226,6 +241,9 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	if agent == "kiro" {
 		return installKiroHooks(path, executable, pushoverConfig)
 	}
+	if agent == "omp" {
+		return installOMPExtension(path, executable, pushoverConfig)
+	}
 
 	root, err := readRoot(path)
 	if err != nil {
@@ -308,6 +326,11 @@ func genericHookSpecs(agent string) []hookSpec {
 		}
 	case "qoder":
 		return []hookSpec{{Name: "Stop", Event: "turn-complete", Timeout: 10, Flag: "--skip-active-stop"}}
+	case "cortex":
+		return []hookSpec{
+			{Name: "Stop", Event: "turn-complete", Timeout: 10},
+			{Name: "PermissionRequest", Event: "approval-required", Timeout: 10},
+		}
 	default:
 		return []hookSpec{
 			{Name: "Stop", Event: "turn-complete", Timeout: 10, Async: true},

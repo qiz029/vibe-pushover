@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/qiz029/vibe-pushover/internal/command"
 	"github.com/qiz029/vibe-pushover/internal/config"
@@ -141,6 +144,302 @@ func TestNotifyCommandSendsHookPayload(t *testing.T) {
 	}
 	if got["ttl"] != "1800" {
 		t.Fatalf("ttl = %q, want 1800", got["ttl"])
+	}
+}
+
+func TestNotifyCommandDeduplicatesImmediateRepeatAcrossProcesses(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	if err := config.Save(configPath, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	requests := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"status":1,"request":"request-id"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	now := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
+	run := func() {
+		t.Helper()
+		app := command.New(command.Options{
+			Stdin:      bytes.NewBufferString(`{"session_id":"session-1","turn_id":"turn-4","cwd":"/tmp/demo","last_assistant_message":"Tests pass."}`),
+			Stdout:     &bytes.Buffer{},
+			Stderr:     &bytes.Buffer{},
+			HTTPClient: httpClient,
+			Endpoint:   "https://pushover.test/messages.json",
+			DedupePath: filepath.Join(dir, "dedupe.json"),
+			Now:        func() time.Time { return now },
+		})
+		if err := app.Run(context.Background(), []string{
+			"vibe-pushover", "notify", "--config", configPath, "--agent", "codex", "--event", "turn-complete",
+		}); err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+	}
+	run()
+	run()
+	if requests != 1 {
+		t.Fatalf("Pushover requests = %d, want 1 for an immediate duplicate", requests)
+	}
+}
+
+func TestNotifyCommandSendsSameNotificationAfterDedupeWindow(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	if err := config.Save(configPath, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	requests := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"status":1}`)), Header: make(http.Header)}, nil
+	})}
+	now := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
+	run := func() {
+		t.Helper()
+		app := command.New(command.Options{
+			Stdin:  bytes.NewBufferString(`{"session_id":"session-1","cwd":"/tmp/demo","last_assistant_message":"Done."}`),
+			Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, HTTPClient: httpClient,
+			Endpoint: "https://pushover.test/messages.json", DedupePath: filepath.Join(dir, "dedupe.json"),
+			Now: func() time.Time { return now },
+		})
+		if err := app.Run(context.Background(), []string{
+			"vibe-pushover", "notify", "--config", configPath, "--agent", "codex", "--event", "turn-complete",
+		}); err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+	}
+	run()
+	now = now.Add(4 * time.Second)
+	run()
+	if requests != 2 {
+		t.Fatalf("Pushover requests = %d, want 2 after the dedupe window", requests)
+	}
+}
+
+func TestNotifyCommandReleasesDedupeReservationAfterDeliveryFailure(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	if err := config.Save(configPath, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	requests := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		requests++
+		if requests == 1 {
+			return nil, errors.New("temporary network failure")
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"status":1}`)), Header: make(http.Header)}, nil
+	})}
+	run := func() error {
+		app := command.New(command.Options{
+			Stdin:  bytes.NewBufferString(`{"session_id":"session-1","turn_id":"turn-1","cwd":"/tmp/demo"}`),
+			Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, HTTPClient: httpClient,
+			Endpoint: "https://pushover.test/messages.json", DedupePath: filepath.Join(dir, "dedupe.json"),
+		})
+		return app.Run(context.Background(), []string{
+			"vibe-pushover", "notify", "--config", configPath, "--agent", "codex", "--event", "turn-complete",
+		})
+	}
+	if err := run(); err == nil {
+		t.Fatal("first Run() error = nil, want temporary delivery failure")
+	}
+	if err := run(); err != nil {
+		t.Fatalf("second Run() error = %v", err)
+	}
+	if requests != 2 {
+		t.Fatalf("Pushover requests = %d, want retry after reservation release", requests)
+	}
+}
+
+func TestNotifyCommandPendingDuplicateRetriesWhenOwnerFails(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	if err := config.Save(configPath, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var requests atomic.Int32
+	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		if requests.Add(1) == 1 {
+			close(firstStarted)
+			<-releaseFirst
+			return nil, errors.New("temporary network failure")
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"status":1}`)), Header: make(http.Header)}, nil
+	})}
+	run := func() error {
+		app := command.New(command.Options{
+			Stdin:  bytes.NewBufferString(`{"session_id":"session-1","turn_id":"turn-1","cwd":"/tmp/demo"}`),
+			Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, HTTPClient: httpClient,
+			Endpoint: "https://pushover.test/messages.json", DedupePath: filepath.Join(dir, "dedupe.json"),
+		})
+		return app.Run(context.Background(), []string{
+			"vibe-pushover", "notify", "--config", configPath, "--agent", "codex", "--event", "turn-complete",
+		})
+	}
+	firstResult := make(chan error, 1)
+	secondResult := make(chan error, 1)
+	go func() { firstResult <- run() }()
+	<-firstStarted
+	go func() { secondResult <- run() }()
+	select {
+	case err := <-secondResult:
+		t.Fatalf("pending duplicate returned before owner settled: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseFirst)
+	if err := <-firstResult; err == nil {
+		t.Fatal("first Run() error = nil, want temporary delivery failure")
+	}
+	if err := <-secondResult; err != nil {
+		t.Fatalf("second Run() error = %v", err)
+	}
+	if requests.Load() != 2 {
+		t.Fatalf("Pushover requests = %d, want failed owner plus retry", requests.Load())
+	}
+}
+
+func TestNotifyCommandFailsOpenWhenDedupeStateIsCorrupt(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	dedupePath := filepath.Join(dir, "dedupe.json")
+	if err := config.Save(configPath, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if err := os.WriteFile(dedupePath, []byte("not-json"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	requests := 0
+	var stderr bytes.Buffer
+	app := command.New(command.Options{
+		Stdin:  bytes.NewBufferString(`{"session_id":"session-1","cwd":"/tmp/demo"}`),
+		Stdout: &bytes.Buffer{}, Stderr: &stderr,
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			requests++
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"status":1}`)), Header: make(http.Header)}, nil
+		})},
+		Endpoint: "https://pushover.test/messages.json", DedupePath: dedupePath,
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--config", configPath, "--agent", "codex", "--event", "turn-complete",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("Pushover requests = %d, want fail-open delivery", requests)
+	}
+	if !strings.Contains(stderr.String(), "dedupe unavailable") {
+		t.Fatalf("stderr = %q, want dedupe warning", stderr.String())
+	}
+}
+
+func TestNotifyCommandDoesNotDeduplicateDifferentNumericTurnIDs(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	if err := config.Save(configPath, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	requests := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"status":1}`)), Header: make(http.Header)}, nil
+	})}
+	for _, turnID := range []string{"9007199254740992", "9007199254740993"} {
+		app := command.New(command.Options{
+			Stdin:  bytes.NewBufferString(`{"session_id":"session-1","turn_id":` + turnID + `,"cwd":"/tmp/demo","last_assistant_message":"Done."}`),
+			Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, HTTPClient: httpClient,
+			Endpoint: "https://pushover.test/messages.json", DedupePath: filepath.Join(dir, "dedupe.json"),
+		})
+		if err := app.Run(context.Background(), []string{
+			"vibe-pushover", "notify", "--config", configPath, "--agent", "codex", "--event", "turn-complete",
+		}); err != nil {
+			t.Fatalf("Run(turn %s) error = %v", turnID, err)
+		}
+	}
+	if requests != 2 {
+		t.Fatalf("Pushover requests = %d, want 2 for distinct numeric turn IDs", requests)
+	}
+}
+
+func TestNotifyCommandDeduplicatesSameDestinationAcrossConfigPaths(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPaths := []string{filepath.Join(dir, "first.json"), filepath.Join(dir, "second.json")}
+	for _, path := range configPaths {
+		if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+			t.Fatalf("Save(%q) error = %v", path, err)
+		}
+	}
+	requests := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"status":1}`)), Header: make(http.Header)}, nil
+	})}
+	for _, path := range configPaths {
+		app := command.New(command.Options{
+			Stdin:  bytes.NewBufferString(`{"session_id":"session-1","turn_id":"turn-1","cwd":"/tmp/demo"}`),
+			Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, HTTPClient: httpClient,
+			Endpoint: "https://pushover.test/messages.json", DedupePath: filepath.Join(dir, "dedupe.json"),
+		})
+		if err := app.Run(context.Background(), []string{
+			"vibe-pushover", "notify", "--config", path, "--agent", "codex", "--event", "turn-complete",
+		}); err != nil {
+			t.Fatalf("Run(%q) error = %v", path, err)
+		}
+	}
+	if requests != 1 {
+		t.Fatalf("Pushover requests = %d, want 1 for the same delivery destination", requests)
+	}
+}
+
+func TestNotifyCommandDoesNotDeduplicateDifferentCredentialConfigs(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPaths := []string{filepath.Join(dir, "personal.json"), filepath.Join(dir, "team.json")}
+	for index, path := range configPaths {
+		if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: fmt.Sprintf("user-%d", index)}); err != nil {
+			t.Fatalf("Save(%q) error = %v", path, err)
+		}
+	}
+	requests := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"status":1}`)), Header: make(http.Header)}, nil
+	})}
+	for _, path := range configPaths {
+		app := command.New(command.Options{
+			Stdin:  bytes.NewBufferString(`{"session_id":"session-1","turn_id":"turn-1","cwd":"/tmp/demo"}`),
+			Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, HTTPClient: httpClient,
+			Endpoint: "https://pushover.test/messages.json", DedupePath: filepath.Join(dir, "dedupe.json"),
+		})
+		if err := app.Run(context.Background(), []string{
+			"vibe-pushover", "notify", "--config", path, "--agent", "codex", "--event", "turn-complete",
+		}); err != nil {
+			t.Fatalf("Run(%q) error = %v", path, err)
+		}
+	}
+	if requests != 2 {
+		t.Fatalf("Pushover requests = %d, want 2 for different credential configs", requests)
 	}
 }
 
@@ -362,7 +661,7 @@ func TestAgentsCommandShowsCapabilities(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"aider", "amp", "auggie", "claude", "codex", "copilot", "cursor", "droid", "gemini", "goose", "hermes", "kimi", "kiro", "opencode", "pi", "qoder", "qwen", "vscode", "windsurf",
+		"aider", "amp", "auggie", "claude", "codex", "copilot", "cortex", "cursor", "droid", "gemini", "goose", "hermes", "kimi", "kiro", "omp", "opencode", "pi", "qoder", "qwen", "vscode", "windsurf",
 		"completion+approval", "completion+approval+attention", "completion+attention", "completion only",
 	} {
 		if !strings.Contains(output, want) {

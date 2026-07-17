@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/qiz029/vibe-pushover/internal/config"
+	"github.com/qiz029/vibe-pushover/internal/dedupe"
 	"github.com/qiz029/vibe-pushover/internal/hooks"
 	"github.com/qiz029/vibe-pushover/internal/notification"
 	"github.com/qiz029/vibe-pushover/internal/pushover"
@@ -27,6 +29,8 @@ type Options struct {
 	HTTPClient *http.Client
 	Endpoint   string
 	Executable string
+	DedupePath string
+	Now        func() time.Time
 }
 
 func New(options Options) *cli.Command {
@@ -290,7 +294,24 @@ func notifyCommand(options Options) *cli.Command {
 					if loadErr != nil {
 						err = loadErr
 					} else if message, err = notification.ApplyProfile(message, event, credentials.NotificationProfile); err == nil {
+						fingerprint := notificationFingerprint(cmd.String("agent"), event, notificationDestination(credentials), payload, message)
+						store := dedupe.Store{Path: options.DedupePath, Now: options.Now}
+						reservation, duplicate, dedupeErr := reserveNotification(store, fingerprint)
+						if dedupeErr != nil {
+							_, _ = fmt.Fprintf(options.Stderr, "vibe-pushover: dedupe unavailable: %v\n", dedupeErr)
+						} else if duplicate {
+							return nil
+						}
 						err = sendWithCredentials(ctx, options, credentials, message)
+						if reservation.Token != "" {
+							if err == nil {
+								if commitErr := store.Commit(reservation); commitErr != nil {
+									_, _ = fmt.Fprintf(options.Stderr, "vibe-pushover: dedupe commit failed: %v\n", commitErr)
+								}
+							} else if releaseErr := store.Release(reservation); releaseErr != nil {
+								_, _ = fmt.Fprintf(options.Stderr, "vibe-pushover: dedupe release failed: %v\n", releaseErr)
+							}
+						}
 					}
 				}
 			}
@@ -350,8 +371,65 @@ func sendWithCredentials(ctx context.Context, options Options, credentials confi
 	})
 }
 
+func reserveNotification(store dedupe.Store, fingerprint string) (dedupe.Reservation, bool, error) {
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for {
+		result, err := store.Reserve(fingerprint)
+		if err != nil {
+			return dedupe.Reservation{}, false, err
+		}
+		switch result.Status {
+		case dedupe.StatusAcquired:
+			return result.Reservation, false, nil
+		case dedupe.StatusDelivered:
+			return dedupe.Reservation{}, true, nil
+		case dedupe.StatusPending:
+			if !time.Now().Before(deadline) {
+				return dedupe.Reservation{}, false, errors.New("pending reservation did not settle within 500ms")
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+	}
+}
+
+func notificationDestination(credentials config.Credentials) string {
+	data := credentials.AppToken + "\x00" + credentials.UserKey
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(data)))
+}
+
+func notificationFingerprint(agent string, event notification.Event, destination string, payload map[string]any, message notification.Message) string {
+	identity := map[string]any{
+		"agent": agent, "event": event, "destination": destination,
+		"title": message.Title, "body": message.Body, "priority": message.Priority, "sound": message.Sound, "ttl": message.TTL,
+	}
+	for _, key := range []string{"session_id", "sessionId", "turn_id", "turnId", "tool_call_id", "toolCallId", "approval_id", "approvalId"} {
+		if value := fingerprintScalar(payload[key]); value != "" {
+			identity[key] = value
+		}
+	}
+	if extra, ok := payload["extra"].(map[string]any); ok {
+		for _, key := range []string{"turn_id", "turnId", "tool_call_id", "toolCallId", "approval_id", "approvalId"} {
+			if value := fingerprintScalar(extra[key]); value != "" {
+				identity["extra."+key] = value
+			}
+		}
+	}
+	data, _ := json.Marshal(identity)
+	return fmt.Sprintf("%x", sha256.Sum256(data))
+}
+
+func fingerprintScalar(value any) string {
+	switch value.(type) {
+	case string, json.Number, float64, float32, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return strings.TrimSpace(fmt.Sprint(value))
+	default:
+		return ""
+	}
+}
+
 func readPayload(reader io.Reader) (map[string]any, error) {
 	decoder := json.NewDecoder(io.LimitReader(reader, 1<<20))
+	decoder.UseNumber()
 	var payload map[string]any
 	if err := decoder.Decode(&payload); errors.Is(err, io.EOF) {
 		payload = map[string]any{}
@@ -402,6 +480,7 @@ func configPath(path string) (string, error) {
 }
 
 func withDefaults(options Options) Options {
+	customDelivery := options.HTTPClient != nil || options.Endpoint != ""
 	if options.Version == "" {
 		options.Version = "dev"
 	}
@@ -419,6 +498,14 @@ func withDefaults(options Options) Options {
 	}
 	if options.Endpoint == "" {
 		options.Endpoint = pushover.DefaultEndpoint
+	}
+	if options.Now == nil {
+		options.Now = time.Now
+	}
+	if options.DedupePath == "" && !customDelivery {
+		if path, err := dedupe.DefaultPath(); err == nil {
+			options.DedupePath = path
+		}
 	}
 	if options.Executable == "" {
 		if executable, err := os.Executable(); err == nil {

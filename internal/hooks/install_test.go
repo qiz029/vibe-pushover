@@ -29,6 +29,21 @@ func TestDefaultPathPiHonorsAgentDir(t *testing.T) {
 	}
 }
 
+func TestDefaultPathOMPHonorsAgentDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "custom-omp-agent")
+	t.Setenv("PI_CODING_AGENT_DIR", dir)
+	t.Setenv("HOME", "")
+
+	got, err := hooks.DefaultPath("omp")
+	if err != nil {
+		t.Fatalf("DefaultPath() error = %v", err)
+	}
+	want := filepath.Join(dir, "extensions", "vibe-pushover", "index.ts")
+	if got != want {
+		t.Fatalf("DefaultPath() = %q, want %q", got, want)
+	}
+}
+
 func TestDefaultPathsForAdditionalAgents(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -41,12 +56,14 @@ func TestDefaultPathsForAdditionalAgents(t *testing.T) {
 		"amp":      filepath.Join(home, ".config", "amp", "plugins", "vibe-pushover.ts"),
 		"auggie":   filepath.Join(home, ".augment", "settings.json"),
 		"copilot":  filepath.Join(home, "copilot-home", "hooks", "vibe-pushover.json"),
+		"cortex":   filepath.Join(home, ".snowflake", "cortex", "hooks.json"),
 		"droid":    filepath.Join(home, ".factory", "settings.json"),
 		"gemini":   filepath.Join(home, "gemini-home", ".gemini", "settings.json"),
 		"goose":    filepath.Join(home, ".agents", "plugins", "vibe-pushover"),
 		"hermes":   filepath.Join(home, ".hermes", "config.yaml"),
 		"kiro":     filepath.Join(home, ".kiro", "hooks", "vibe-pushover.json"),
 		"opencode": filepath.Join(home, ".xdg", "opencode", "plugins", "vibe-pushover.ts"),
+		"omp":      filepath.Join(home, ".omp", "agent", "extensions", "vibe-pushover", "index.ts"),
 		"qoder":    filepath.Join(home, ".qoder", "settings.json"),
 		"qwen":     filepath.Join(home, ".qwen", "settings.json"),
 		"vscode":   filepath.Join(home, "copilot-home", "hooks", "vibe-pushover.json"),
@@ -542,6 +559,119 @@ func TestInstallAddsQoderCompletionHook(t *testing.T) {
 	}
 	if changed {
 		t.Fatal("second Install() changed Qoder hooks")
+	}
+}
+
+func TestInstallAddsCortexCompletionAndApprovalHooks(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".snowflake", "cortex", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"theme":"dark","hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"existing"}]}]}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	changed, err := hooks.Install("cortex", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var got struct {
+		Hooks map[string][]map[string]any `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	for _, event := range []string{"Stop", "PermissionRequest"} {
+		if len(got.Hooks[event]) != 1 {
+			t.Fatalf("%s hook count = %d, want 1", event, len(got.Hooks[event]))
+		}
+		commands, _ := got.Hooks[event][0]["hooks"].([]any)
+		command, _ := commands[0].(map[string]any)
+		if command["timeout"] != float64(10) {
+			t.Fatalf("%s timeout = %#v, want 10 seconds", event, command["timeout"])
+		}
+		if _, exists := command["async"]; exists {
+			t.Fatalf("%s command unexpectedly contains unsupported async field: %#v", event, command)
+		}
+	}
+	for _, want := range []string{
+		`"theme": "dark"`, `"command": "existing"`,
+		"--agent cortex --event turn-complete --ignore-errors",
+		"--agent cortex --event approval-required --ignore-errors",
+		"--config '/tmp/pushover.json'",
+	} {
+		if !bytes.Contains(data, []byte(want)) {
+			t.Fatalf("Cortex config does not contain %q:\n%s", want, data)
+		}
+	}
+	changed, err = hooks.Install("cortex", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed Cortex hooks")
+	}
+}
+
+func TestInstallAddsOhMyPiCompletionAndApprovalExtension(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".omp", "agent", "extensions", "vibe-pushover", "index.ts")
+	changed, err := hooks.Install("omp", path, "/opt/bin/vibe-pushover", "/tmp/pushover config.json")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	for _, want := range []string{
+		`pi.on("agent_end"`, `event.willContinue`, `lastAssistantText(event.messages)`,
+		`pi.on("tool_approval_requested"`, `tool_name: event.toolName`, `reason: event.reason`,
+		`"--agent"`, `"omp"`, `"turn-complete"`, `"approval-required"`,
+		`const configPath = "/tmp/pushover config.json"`,
+	} {
+		if !bytes.Contains(data, []byte(want)) {
+			t.Fatalf("Oh My Pi extension does not contain %q:\n%s", want, data)
+		}
+	}
+	changed, err = hooks.Install("omp", path, "/opt/bin/vibe-pushover", "/tmp/pushover config.json")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed Oh My Pi extension")
+	}
+}
+
+func TestInstallRefusesToOverwriteUnownedOhMyPiExtension(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "index.ts")
+	if err := os.WriteFile(path, []byte("export default function custom() {}\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	changed, err := hooks.Install("omp", path, "/opt/bin/vibe-pushover", "")
+	if err == nil || changed {
+		t.Fatalf("Install() = changed %v, error %v; want refusal", changed, err)
+	}
+	data, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatalf("ReadFile() error = %v", readErr)
+	}
+	if string(data) != "export default function custom() {}\n" {
+		t.Fatalf("unowned extension was modified: %q", data)
 	}
 }
 
