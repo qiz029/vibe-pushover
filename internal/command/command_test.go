@@ -258,6 +258,54 @@ func TestPreviewCommandShowsNotificationWithoutCredentials(t *testing.T) {
 	}
 }
 
+func TestPreviewUsesProcessDirectoryWhenHookPayloadHasNoWorkspace(t *testing.T) {
+	t.Parallel()
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin:  &bytes.Buffer{},
+		Stdout: &stdout,
+		Stderr: &bytes.Buffer{},
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "preview", "--agent", "kiro", "--event", "turn-complete",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := "✓ Kiro finished · " + filepath.Base(cwd)
+	if !strings.Contains(stdout.String(), want) {
+		t.Fatalf("preview output does not contain %q:\n%s", want, stdout.String())
+	}
+}
+
+func TestPreviewUsesProcessDirectoryWhenHookWorkspaceIsEmpty(t *testing.T) {
+	t.Parallel()
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin:  bytes.NewBufferString(`{"cwd":"","workspace_roots":[]}`),
+		Stdout: &stdout,
+		Stderr: &bytes.Buffer{},
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "preview", "--agent", "kiro", "--event", "turn-complete",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := "✓ Kiro finished · " + filepath.Base(cwd)
+	if !strings.Contains(stdout.String(), want) {
+		t.Fatalf("preview output does not contain %q:\n%s", want, stdout.String())
+	}
+}
+
 func TestAgentsCommandShowsCapabilities(t *testing.T) {
 	t.Parallel()
 
@@ -268,7 +316,7 @@ func TestAgentsCommandShowsCapabilities(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"auggie", "claude", "codex", "copilot", "cursor", "droid", "gemini", "goose", "kimi", "opencode", "pi", "qwen", "vscode", "windsurf",
+		"aider", "amp", "auggie", "claude", "codex", "copilot", "cursor", "droid", "gemini", "goose", "kimi", "kiro", "opencode", "pi", "qwen", "vscode", "windsurf",
 		"completion+approval", "completion+approval+attention", "completion+attention", "completion only",
 	} {
 		if !strings.Contains(output, want) {

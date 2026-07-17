@@ -344,11 +344,40 @@ func readPayload(reader io.Reader) (map[string]any, error) {
 	decoder := json.NewDecoder(io.LimitReader(reader, 1<<20))
 	var payload map[string]any
 	if err := decoder.Decode(&payload); errors.Is(err, io.EOF) {
-		return map[string]any{}, nil
+		payload = map[string]any{}
 	} else if err != nil {
 		return nil, fmt.Errorf("parse hook payload: %w", err)
 	}
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	if !hasUsableWorkspace(payload) {
+		if cwd, err := os.Getwd(); err == nil {
+			payload["cwd"] = cwd
+		}
+	}
 	return payload, nil
+}
+
+func hasUsableWorkspace(payload map[string]any) bool {
+	if cwd, ok := payload["cwd"].(string); ok && strings.TrimSpace(cwd) != "" {
+		return true
+	}
+	switch roots := payload["workspace_roots"].(type) {
+	case []any:
+		for _, root := range roots {
+			if value, ok := root.(string); ok && strings.TrimSpace(value) != "" {
+				return true
+			}
+		}
+	case []string:
+		for _, root := range roots {
+			if strings.TrimSpace(root) != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func configFlag() cli.Flag {

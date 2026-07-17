@@ -100,7 +100,7 @@ func Build(agent string, event Event, payload map[string]any) (Message, error) {
 }
 
 func completionDetail(agent string, payload map[string]any) string {
-	if detail := firstLine(firstString(payload, "last_assistant_message", "prompt_response", "message", "reason")); detail != "" {
+	if detail := completionLine(firstString(payload, "last_assistant_message", "prompt_response", "assistant_response", "message", "reason")); detail != "" {
 		return detail
 	}
 	if agent == "windsurf" {
@@ -110,10 +110,28 @@ func completionDetail(agent string, payload map[string]any) string {
 	}
 	if agent == "auggie" {
 		if conversation, ok := payload["conversation"].(map[string]any); ok {
-			return firstLine(stringValue(conversation, "agentTextResponse"))
+			return completionLine(stringValue(conversation, "agentTextResponse"))
 		}
 	}
 	return ""
+}
+
+func completionLine(value string) string {
+	fallback := ""
+	for _, line := range strings.Split(value, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~") {
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			if fallback == "" {
+				fallback = strings.Join(strings.Fields(strings.TrimSpace(strings.TrimLeft(line, "#"))), " ")
+			}
+			continue
+		}
+		return strings.Join(strings.Fields(line), " ")
+	}
+	return fallback
 }
 
 func payloadWorkingDirectory(payload map[string]any) string {
@@ -121,11 +139,18 @@ func payloadWorkingDirectory(payload map[string]any) string {
 		return cwd
 	}
 	if roots, ok := payload["workspace_roots"].([]any); ok && len(roots) > 0 {
-		root, _ := roots[0].(string)
-		return strings.TrimSpace(root)
+		for _, raw := range roots {
+			if root, ok := raw.(string); ok && strings.TrimSpace(root) != "" {
+				return strings.TrimSpace(root)
+			}
+		}
 	}
 	if roots, ok := payload["workspace_roots"].([]string); ok && len(roots) > 0 {
-		return strings.TrimSpace(roots[0])
+		for _, root := range roots {
+			if strings.TrimSpace(root) != "" {
+				return strings.TrimSpace(root)
+			}
+		}
 	}
 	return ""
 }

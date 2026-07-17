@@ -49,6 +49,48 @@ func TestBuildTurnCompleteNotificationTruncatesUnicodeSummary(t *testing.T) {
 	}
 }
 
+func TestBuildTurnCompleteNotificationSkipsMarkdownHeading(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("amp", notification.EventTurnComplete, map[string]any{
+		"last_assistant_message": "## Summary\n\nImplemented Amp notifications and all tests pass.",
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Body != "Implemented Amp notifications and all tests pass." {
+		t.Fatalf("Body = %q", got.Body)
+	}
+}
+
+func TestBuildTurnCompleteNotificationUsesHeadingWhenItIsOnlyContent(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("kiro", notification.EventTurnComplete, map[string]any{
+		"last_assistant_message": "# Done",
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Body != "Done" {
+		t.Fatalf("Body = %q", got.Body)
+	}
+}
+
+func TestBuildKiroCompletionUsesAssistantResponse(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("kiro", notification.EventTurnComplete, map[string]any{
+		"assistant_response": "## Result\n\nImplemented the requested Kiro hook.",
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Body != "Implemented the requested Kiro hook." {
+		t.Fatalf("Body = %q", got.Body)
+	}
+}
+
 func TestBuildApprovalNotification(t *testing.T) {
 	t.Parallel()
 
@@ -173,6 +215,20 @@ func TestBuildAuggieCompletionUsesConversationAndWorkspaceRoot(t *testing.T) {
 	}
 	if got.Title != "✓ Auggie finished · demo" || got.Body != "Implemented the requested changes." {
 		t.Fatalf("Auggie notification = %#v", got)
+	}
+}
+
+func TestBuildUsesFirstNonEmptyWorkspaceRoot(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("kiro", notification.EventTurnComplete, map[string]any{
+		"workspace_roots": []any{"", "/tmp/demo"},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Title != "✓ Kiro finished · demo" {
+		t.Fatalf("Title = %q", got.Title)
 	}
 }
 

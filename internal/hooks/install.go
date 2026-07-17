@@ -19,6 +19,8 @@ type AgentInfo struct {
 }
 
 var agentCatalog = []AgentInfo{
+	{Name: "aider", DisplayName: "Aider", Capabilities: "completion only (macOS/Linux)", Resource: "config+script"},
+	{Name: "amp", DisplayName: "Amp", Capabilities: "completion+approval+attention", Resource: "plugin"},
 	{Name: "auggie", DisplayName: "Augment Auggie", Capabilities: "completion only", Resource: "hooks+script"},
 	{Name: "claude", DisplayName: "Claude Code", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "codex", DisplayName: "Codex CLI", Capabilities: "completion+approval", Resource: "hooks"},
@@ -28,6 +30,7 @@ var agentCatalog = []AgentInfo{
 	{Name: "gemini", DisplayName: "Gemini CLI", Capabilities: "completion only", Resource: "hooks"},
 	{Name: "goose", DisplayName: "Goose", Capabilities: "completion only", Resource: "plugin"},
 	{Name: "kimi", DisplayName: "Kimi Code CLI", Capabilities: "completion+approval", Resource: "hooks"},
+	{Name: "kiro", DisplayName: "Kiro", Capabilities: "completion only (macOS/Linux)", Resource: "hooks"},
 	{Name: "opencode", DisplayName: "OpenCode", Capabilities: "completion+approval", Resource: "plugin"},
 	{Name: "pi", DisplayName: "Pi", Capabilities: "completion only", Resource: "extension"},
 	{Name: "qwen", DisplayName: "Qwen Code", Capabilities: "completion+approval+attention", Resource: "hooks"},
@@ -37,23 +40,6 @@ var agentCatalog = []AgentInfo{
 
 func Agents() []AgentInfo {
 	return append([]AgentInfo(nil), agentCatalog...)
-}
-
-var supportedAgents = map[string]struct{}{
-	"auggie":   {},
-	"claude":   {},
-	"codex":    {},
-	"copilot":  {},
-	"cursor":   {},
-	"droid":    {},
-	"gemini":   {},
-	"goose":    {},
-	"kimi":     {},
-	"opencode": {},
-	"pi":       {},
-	"qwen":     {},
-	"vscode":   {},
-	"windsurf": {},
 }
 
 type hookCommand struct {
@@ -120,6 +106,10 @@ func DefaultPath(agent string) (string, error) {
 		return "", fmt.Errorf("find home directory: %w", err)
 	}
 	switch agent {
+	case "aider":
+		return filepath.Join(home, ".aider.conf.yml"), nil
+	case "amp":
+		return filepath.Join(home, ".config", "amp", "plugins", "vibe-pushover.ts"), nil
 	case "auggie":
 		return filepath.Join(home, ".augment", "settings.json"), nil
 	case "codex":
@@ -138,6 +128,8 @@ func DefaultPath(agent string) (string, error) {
 		return filepath.Join(home, ".agents", "plugins", "vibe-pushover"), nil
 	case "kimi":
 		return filepath.Join(home, ".kimi-code", "config.toml"), nil
+	case "kiro":
+		return filepath.Join(home, ".kiro", "hooks", "vibe-pushover.json"), nil
 	case "opencode":
 		configDir := os.Getenv("XDG_CONFIG_HOME")
 		if configDir == "" {
@@ -158,7 +150,7 @@ func DefaultPath(agent string) (string, error) {
 	case "windsurf":
 		return filepath.Join(home, ".codeium", "windsurf", "hooks.json"), nil
 	default:
-		return "", fmt.Errorf("unsupported agent %q (supported: auggie, claude, codex, copilot, cursor, droid, gemini, goose, kimi, opencode, pi, qwen, vscode, windsurf)", agent)
+		return "", unsupportedAgentError(agent)
 	}
 }
 
@@ -177,14 +169,20 @@ func expandHome(path string) (string, error) {
 }
 
 func Install(agent, path, executable, pushoverConfig string) (bool, error) {
-	if _, ok := supportedAgents[agent]; !ok {
-		return false, fmt.Errorf("unsupported agent %q (supported: auggie, claude, codex, copilot, cursor, droid, gemini, goose, kimi, opencode, pi, qwen, vscode, windsurf)", agent)
+	if !isSupportedAgent(agent) {
+		return false, unsupportedAgentError(agent)
 	}
 	if strings.TrimSpace(executable) == "" {
 		return false, errors.New("executable path is required")
 	}
 	if agent == "pi" {
 		return installPiExtension(path, executable, pushoverConfig)
+	}
+	if agent == "aider" {
+		return installAiderNotifications(path, executable, pushoverConfig)
+	}
+	if agent == "amp" {
+		return installAmpPlugin(path, executable, pushoverConfig)
 	}
 	if agent == "auggie" {
 		return installAuggieHooks(path, executable, pushoverConfig)
@@ -206,6 +204,9 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	}
 	if agent == "kimi" {
 		return installKimiHooks(path, executable, pushoverConfig)
+	}
+	if agent == "kiro" {
+		return installKiroHooks(path, executable, pushoverConfig)
 	}
 
 	root, err := readRoot(path)
@@ -253,6 +254,23 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func isSupportedAgent(name string) bool {
+	for _, agent := range agentCatalog {
+		if agent.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func unsupportedAgentError(name string) error {
+	names := make([]string, 0, len(agentCatalog))
+	for _, agent := range agentCatalog {
+		names = append(names, agent.Name)
+	}
+	return fmt.Errorf("unsupported agent %q (supported: %s)", name, strings.Join(names, ", "))
 }
 
 func genericHookSpecs(agent string) []hookSpec {
