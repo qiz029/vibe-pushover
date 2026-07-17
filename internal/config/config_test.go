@@ -156,3 +156,44 @@ func TestFocusStateUsesValidatedDeadline(t *testing.T) {
 		t.Fatal("Validate() accepted malformed focus deadline")
 	}
 }
+
+func TestQuietHoursUseLocalDailyWindows(t *testing.T) {
+	t.Parallel()
+
+	location := time.FixedZone("PDT", -7*60*60)
+	overnight := config.Credentials{
+		AppToken: "app", UserKey: "user", QuietHoursStart: "22:00", QuietHoursEnd: "08:00",
+	}
+	for _, test := range []struct {
+		hour, minute int
+		want         bool
+	}{
+		{hour: 21, minute: 59, want: false},
+		{hour: 22, minute: 0, want: true},
+		{hour: 7, minute: 59, want: true},
+		{hour: 8, minute: 0, want: false},
+	} {
+		now := time.Date(2026, time.July, 17, test.hour, test.minute, 0, 0, location)
+		if got := overnight.IsQuietHours(now); got != test.want {
+			t.Errorf("IsQuietHours(%s) = %t, want %t", now.Format("15:04"), got, test.want)
+		}
+	}
+	daytime := config.Credentials{
+		AppToken: "app", UserKey: "user", QuietHoursStart: "13:00", QuietHoursEnd: "15:00",
+	}
+	if !daytime.IsQuietHours(time.Date(2026, time.July, 17, 14, 0, 0, 0, location)) {
+		t.Fatal("IsQuietHours() = false inside daytime window")
+	}
+	if daytime.IsQuietHours(time.Date(2026, time.July, 17, 16, 0, 0, 0, location)) {
+		t.Fatal("IsQuietHours() = true outside daytime window")
+	}
+	for _, invalid := range []config.Credentials{
+		{AppToken: "app", UserKey: "user", QuietHoursStart: "22:00"},
+		{AppToken: "app", UserKey: "user", QuietHoursStart: "25:00", QuietHoursEnd: "08:00"},
+		{AppToken: "app", UserKey: "user", QuietHoursStart: "08:00", QuietHoursEnd: "08:00"},
+	} {
+		if err := invalid.Validate(); err == nil {
+			t.Fatalf("Validate() accepted invalid quiet hours: %#v", invalid)
+		}
+	}
+}

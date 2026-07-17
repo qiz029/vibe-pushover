@@ -17,6 +17,8 @@ type Credentials struct {
 	NotificationProfile string `json:"notification_profile,omitempty"`
 	SnoozedUntil        string `json:"snoozed_until,omitempty"`
 	FocusUntil          string `json:"focus_until,omitempty"`
+	QuietHoursStart     string `json:"quiet_hours_start,omitempty"`
+	QuietHoursEnd       string `json:"quiet_hours_end,omitempty"`
 	TurnCompleteSound   string `json:"turn_complete_sound,omitempty"`
 	ApprovalSound       string `json:"approval_required_sound,omitempty"`
 	AttentionSound      string `json:"attention_required_sound,omitempty"`
@@ -113,6 +115,19 @@ func (c Credentials) Validate() error {
 			return fmt.Errorf("focus_until must be an RFC3339 timestamp: %w", err)
 		}
 	}
+	if (c.QuietHoursStart == "") != (c.QuietHoursEnd == "") {
+		return errors.New("quiet_hours_start and quiet_hours_end must both be set or both be empty")
+	}
+	if c.QuietHoursStart != "" {
+		start, startOK := clockMinutes(c.QuietHoursStart)
+		end, endOK := clockMinutes(c.QuietHoursEnd)
+		if !startOK || !endOK {
+			return errors.New("quiet hours must use 24-hour HH:MM times")
+		}
+		if start == end {
+			return errors.New("quiet hours start and end must differ")
+		}
+	}
 	for _, preference := range []struct {
 		field string
 		sound string
@@ -136,6 +151,27 @@ func (c Credentials) IsSnoozed(now time.Time) bool {
 func (c Credentials) IsFocused(now time.Time) bool {
 	until, err := time.Parse(time.RFC3339Nano, c.FocusUntil)
 	return err == nil && now.Before(until)
+}
+
+func (c Credentials) IsQuietHours(now time.Time) bool {
+	start, startOK := clockMinutes(c.QuietHoursStart)
+	end, endOK := clockMinutes(c.QuietHoursEnd)
+	if !startOK || !endOK || start == end {
+		return false
+	}
+	current := now.Hour()*60 + now.Minute()
+	if start < end {
+		return current >= start && current < end
+	}
+	return current >= start || current < end
+}
+
+func clockMinutes(value string) (int, bool) {
+	parsed, err := time.Parse("15:04", value)
+	if err != nil || parsed.Format("15:04") != value {
+		return 0, false
+	}
+	return parsed.Hour()*60 + parsed.Minute(), true
 }
 
 func validDeviceName(device string) bool {

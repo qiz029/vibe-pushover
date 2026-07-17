@@ -18,3 +18,15 @@ func TestMiMoPluginPathUsesLocalAppDataOnWindows(t *testing.T) {
 		t.Fatalf("mimoPluginPath() = %q, want %q", got, want)
 	}
 }
+
+func TestKiloPluginPathUsesAppDataOnWindows(t *testing.T) {
+	values := map[string]string{"APPDATA": `C:\Users\Todd\AppData\Roaming`}
+	got, err := kiloPluginPath("windows", `C:\Users\Todd`, func(name string) string { return values[name] })
+	if err != nil {
+		t.Fatalf("kiloPluginPath() error = %v", err)
+	}
+	want := filepath.Join(values["APPDATA"], "kilo", "plugin", "vibe-pushover.ts")
+	if got != want {
+		t.Fatalf("kiloPluginPath() = %q, want %q", got, want)
+	}
+}

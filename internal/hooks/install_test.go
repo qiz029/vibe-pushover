@@ -49,12 +49,14 @@ func TestDetectedAgentsFindsEverySupportedConfigHome(t *testing.T) {
 		filepath.Join(".snowflake", "cortex"),
 		".cursor",
 		".factory",
+		".craft",
 		".gemini",
 		filepath.Join(".config", "goose"),
 		".grok",
 		".hermes",
 		".kimi-code",
 		".kiro",
+		filepath.Join(".config", "kilo"),
 		filepath.Join(".config", "mimocode"),
 		".vibe",
 		".omp",
@@ -213,6 +215,14 @@ func TestDefaultPathMiMoRejectsRelativeMiMoCodeHome(t *testing.T) {
 	}
 }
 
+func TestDefaultPathKiloRejectsRelativeXDGConfigHome(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "relative/config")
+
+	if _, err := hooks.DefaultPath("kilo"); err == nil {
+		t.Fatal("DefaultPath() accepted relative XDG_CONFIG_HOME for Kilo Code")
+	}
+}
+
 func TestDefaultPathsForAdditionalAgents(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -234,10 +244,12 @@ func TestDefaultPathsForAdditionalAgents(t *testing.T) {
 		"copilot":     filepath.Join(home, "copilot-home", "hooks", "vibe-pushover.json"),
 		"cortex":      filepath.Join(home, ".snowflake", "cortex", "hooks.json"),
 		"droid":       filepath.Join(home, ".factory", "settings.json"),
+		"dotcraft":    filepath.Join(home, ".craft", "hooks.json"),
 		"gemini":      filepath.Join(home, "gemini-home", ".gemini", "settings.json"),
 		"goose":       filepath.Join(home, ".agents", "plugins", "vibe-pushover"),
 		"hermes":      filepath.Join(home, ".hermes", "config.yaml"),
 		"kiro":        filepath.Join(home, ".kiro", "hooks", "vibe-pushover.json"),
+		"kilo":        filepath.Join(home, ".xdg", "kilo", "plugin", "vibe-pushover.ts"),
 		"mimo":        filepath.Join(home, ".xdg", "mimocode", "plugins", "vibe-pushover.ts"),
 		"opencode":    filepath.Join(home, ".xdg", "opencode", "plugins", "vibe-pushover.ts"),
 		"omp":         filepath.Join(home, ".omp", "agent", "extensions", "vibe-pushover", "index.ts"),
@@ -1647,13 +1659,22 @@ func TestInstallCreatesOpenCodePlugin(t *testing.T) {
 	}
 	for _, want := range []string{
 		`const childSessions = new Set();`,
+		`const erroredSessions = new Set();`,
 		`event.type === "session.created"`,
 		`event.type === "session.deleted"`,
 		`event.properties?.info?.parentID`,
 		`childSessions.has(sessionID)`,
 		`childSessions.delete(deletedSessionID)`,
+		`event.type === "session.status"`,
+		`event.properties?.status?.type !== "idle"`,
+		`erroredSessions.delete(event.properties.sessionID)`,
 		`event.type === "session.idle"`,
 		`event.type === "permission.asked"`,
+		`event.type === "session.error"`,
+		`erroredSessions.add(sessionID)`,
+		`erroredSessions.delete(sessionID)`,
+		`error?.data?.message`,
+		`"attention-required"`,
 		`"--agent", "opencode"`,
 		`"--config", configPath`,
 	} {
@@ -1667,6 +1688,118 @@ func TestInstallCreatesOpenCodePlugin(t *testing.T) {
 	}
 	if changed {
 		t.Fatal("second Install() changed OpenCode plugin")
+	}
+}
+
+func TestInstallCreatesKiloCodePlugin(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "kilo", "plugin", "vibe-pushover.ts")
+	changed, err := hooks.Install("kilo", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	for _, want := range []string{
+		`const VibePushover = async`,
+		`export default { id: "vibe-pushover", server: VibePushover };`,
+		`const erroredSessions = new Set();`,
+		`event.type === "session.status"`,
+		`event.properties?.status?.type !== "idle"`,
+		`erroredSessions.delete(event.properties.sessionID)`,
+		`event.type === "session.idle"`,
+		`event.type === "permission.asked"`,
+		`event.type === "session.error"`,
+		`"attention-required"`,
+		`erroredSessions.add(sessionID)`,
+		`erroredSessions.delete(sessionID)`,
+		`error?.data?.message`,
+		`event.type === "session.error"`,
+		`"attention-required"`,
+		`childSessions.has(sessionID)`,
+		`"--agent", "kilo"`,
+		`"--config", configPath`,
+	} {
+		if !bytes.Contains(data, []byte(want)) {
+			t.Fatalf("Kilo Code plugin does not contain %q:\n%s", want, data)
+		}
+	}
+	changed, err = hooks.Install("kilo", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed Kilo Code plugin")
+	}
+}
+
+func TestInstallAddsDotCraftLifecycleHooks(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".craft", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	original := `{"hooks":{"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"personal-audit","timeout":3}]}]}}`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	changed, err := hooks.Install("dotcraft", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	type dotCraftCommand struct {
+		Command string `json:"command"`
+	}
+	type dotCraftGroup struct {
+		Hooks []dotCraftCommand `json:"hooks"`
+	}
+	var got struct {
+		Hooks map[string][]dotCraftGroup `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if len(got.Hooks["PostToolUse"]) != 1 || got.Hooks["PostToolUse"][0].Hooks[0].Command != "personal-audit" {
+		t.Fatalf("third-party DotCraft hook changed: %#v", got.Hooks["PostToolUse"])
+	}
+	wants := map[string]string{
+		"Stop":              "turn-complete",
+		"StopFailure":       "attention-required",
+		"PermissionRequest": "approval-required",
+	}
+	for hookName, event := range wants {
+		groups := got.Hooks[hookName]
+		if len(groups) != 1 || len(groups[0].Hooks) != 1 {
+			t.Fatalf("DotCraft %s hook = %#v", hookName, groups)
+		}
+		command := groups[0].Hooks[0].Command
+		if !strings.Contains(command, "notify --agent dotcraft --event "+event+" --ignore-errors") || !strings.Contains(command, "--config '/tmp/pushover.json'") {
+			t.Fatalf("DotCraft %s command = %q", hookName, command)
+		}
+	}
+	if !strings.Contains(got.Hooks["Stop"][0].Hooks[0].Command, "--skip-active-stop") {
+		t.Fatalf("DotCraft Stop command does not filter re-entry: %q", got.Hooks["Stop"][0].Hooks[0].Command)
+	}
+	changed, err = hooks.Install("dotcraft", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed DotCraft hooks")
 	}
 }
 

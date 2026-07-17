@@ -5,7 +5,7 @@
 - finishes a turn;
 - needs manual approval or otherwise needs your attention.
 
-The CLI currently integrates with 34 coding agents: Aider, Amp, Antigravity CLI, Augment Auggie, Claude Code, Cline, CodeBuddy Code, CodeWhale (formerly DeepSeek-TUI), Codex CLI, GitHub Copilot CLI, Snowflake Cortex Code, Cursor, Factory Droid, Gemini CLI, Goose, Grok Build, Hermes Agent, Kimi Code CLI, Kiro, MiMo Code, Mistral Vibe, Oh My Pi, OpenHands CLI, OpenCode, Pi, Qoder, Qwen Code, Rovo Dev CLI, Tabnine CLI, TRAE, VS Code Agent, Windsurf, WorkBuddy, and ZCode. It is written in Go and uses [`urfave/cli`](https://github.com/urfave/cli).
+The CLI currently integrates with 36 coding agents: Aider, Amp, Antigravity CLI, Augment Auggie, Claude Code, Cline, CodeBuddy Code, CodeWhale (formerly DeepSeek-TUI), Codex CLI, GitHub Copilot CLI, Snowflake Cortex Code, Cursor, Factory Droid, DotCraft, Gemini CLI, Goose, Grok Build, Hermes Agent, Kimi Code CLI, Kiro, Kilo Code, MiMo Code, Mistral Vibe, Oh My Pi, OpenHands CLI, OpenCode, Pi, Qoder, Qwen Code, Rovo Dev CLI, Tabnine CLI, TRAE, VS Code Agent, Windsurf, WorkBuddy, and ZCode. It is written in Go and uses [`urfave/cli`](https://github.com/urfave/cli).
 
 ## Install
 
@@ -18,8 +18,8 @@ curl -fsSL https://github.com/qiz029/vibe-pushover/releases/latest/download/inst
 By default the installer writes to `~/.local/bin`. Override it with `VIBE_PUSHOVER_INSTALL_DIR`, or pin a release with `VIBE_PUSHOVER_VERSION`:
 
 ```sh
-curl -fsSL https://github.com/qiz029/vibe-pushover/releases/download/v0.14.0/install.sh | \
-  VIBE_PUSHOVER_VERSION=v0.14.0 VIBE_PUSHOVER_INSTALL_DIR="$HOME/bin" sh
+curl -fsSL https://github.com/qiz029/vibe-pushover/releases/download/v0.15.0/install.sh | \
+  VIBE_PUSHOVER_VERSION=v0.15.0 VIBE_PUSHOVER_INSTALL_DIR="$HOME/bin" sh
 ```
 
 `VIBE_PUSHOVER_DOWNLOAD_BASE_URL` can point the installer at a trusted mirror; when set, `VIBE_PUSHOVER_VERSION` is also required.
@@ -54,7 +54,7 @@ Saved Pushover credentials to ...
 
 Both credential values are hidden when setup runs in a terminal. `configure` remains available as an alias for `setup`.
 
-The default follows Go's user config directory: `~/Library/Application Support/vibe-pushover/config.json` on macOS, and `$XDG_CONFIG_HOME/vibe-pushover/config.json` (usually `~/.config/vibe-pushover/config.json`) on Linux. The containing directory and config file are created with `0700` and `0600` permissions. Use `--config PATH` on `setup`, `profile`, `device`, `snooze`, `focus`, `install`, `test`, or `notify` to override it.
+The default follows Go's user config directory: `~/Library/Application Support/vibe-pushover/config.json` on macOS, and `$XDG_CONFIG_HOME/vibe-pushover/config.json` (usually `~/.config/vibe-pushover/config.json`) on Linux. The containing directory and config file are created with `0700` and `0600` permissions. Use `--config PATH` on `setup`, `profile`, `device`, `snooze`, `focus`, `quiet-hours`, `install`, `test`, or `notify` to override it.
 
 Send a real test notification:
 
@@ -63,7 +63,7 @@ vibe-pushover test
 vibe-pushover test --event turn-complete --message "Completion style looks good."
 ```
 
-The default test simulates an approval request so its high-priority sound, expiry, configured device target, and Pushover application icon can be checked end to end. Use `--event turn-complete` or `--event attention-required` to exercise the other styles. Tests honor the configured profile, snooze state, and focus mode, so suppressed delivery is reported instead of sending a misleading notification. Add `--force` when you deliberately want to test a suppressed delivery.
+The default test simulates an approval request so its high-priority sound, expiry, configured device target, and Pushover application icon can be checked end to end. Use `--event turn-complete` or `--event attention-required` to exercise the other styles. Tests honor the configured profile, snooze state, focus mode, and quiet hours, so suppressed delivery is reported instead of sending a misleading notification. Add `--force` when you deliberately want to test a suppressed delivery.
 
 The notification profile can be viewed or changed later without re-entering the Pushover credentials:
 
@@ -100,6 +100,16 @@ vibe-pushover focus off   # resume completion notifications
 
 While focus mode is active, approval and attention notifications continue normally. Only `turn-complete` is suppressed. `blockers-only` is an alias for `focus`, and the mode expires automatically.
 
+Schedule the same blocker-only behavior every day using local 24-hour time. Overnight windows are supported:
+
+```sh
+vibe-pushover quiet-hours 22:00 08:00
+vibe-pushover quiet-hours             # show the schedule
+vibe-pushover quiet-hours off         # disable the schedule
+```
+
+Quiet hours recur in the machine's current local timezone and suppress only `turn-complete`; approval and attention notifications remain active. Start is inclusive and end is exclusive.
+
 Choose a distinct Pushover sound for each event without reinstalling any agent hooks:
 
 ```sh
@@ -127,8 +137,10 @@ vibe-pushover install --agent cline
 vibe-pushover install --agent codebuddy
 vibe-pushover install --agent codewhale
 vibe-pushover install --agent codex
+vibe-pushover install --agent dotcraft
 vibe-pushover install --agent gemini
 vibe-pushover install --agent grok
+vibe-pushover install --agent kilo
 vibe-pushover install --agent mimo
 vibe-pushover install --agent mistral
 vibe-pushover install --agent omp
@@ -160,17 +172,19 @@ vibe-pushover install --agent zcode
 | Snowflake Cortex Code | completion, approval | `~/.snowflake/cortex/hooks.json` (preview hook API) |
 | Cursor | completion | `~/.cursor/hooks.json` |
 | Factory Droid | completion, attention | `~/.factory/settings.json` |
+| DotCraft | completion, approval, Stop-hook failure attention | `~/.craft/hooks.json` |
 | Gemini CLI | completion | `$GEMINI_CLI_HOME/.gemini/settings.json` or `~/.gemini/settings.json` |
 | Goose | completion | `~/.agents/plugins/vibe-pushover/` |
 | Grok Build | completion, failure attention | `$GROK_HOME/hooks/vibe-pushover.json` or `~/.grok/hooks/vibe-pushover.json` |
 | Hermes Agent | completion, approval | `$HERMES_HOME/config.yaml` or `~/.hermes/config.yaml` |
 | Kimi Code CLI | completion, approval | `$KIMI_CODE_HOME/config.toml` or `~/.kimi-code/config.toml` |
 | Kiro | completion (macOS/Linux) | `~/.kiro/hooks/vibe-pushover.json` |
-| MiMo Code | completion, approval | `$MIMOCODE_HOME/config/plugins/vibe-pushover.ts`; otherwise `$XDG_CONFIG_HOME/mimocode/plugins/vibe-pushover.ts`, `~/.config/mimocode/plugins/vibe-pushover.ts` (macOS/Linux), or `%LOCALAPPDATA%\mimocode\plugins\vibe-pushover.ts` (Windows) |
+| Kilo Code | completion, approval, error attention | `$XDG_CONFIG_HOME/kilo/plugin/vibe-pushover.ts`, `~/.config/kilo/plugin/vibe-pushover.ts` (macOS/Linux), or `%APPDATA%\kilo\plugin\vibe-pushover.ts` (Windows) |
+| MiMo Code | completion, approval, error attention | `$MIMOCODE_HOME/config/plugins/vibe-pushover.ts`; otherwise `$XDG_CONFIG_HOME/mimocode/plugins/vibe-pushover.ts`, `~/.config/mimocode/plugins/vibe-pushover.ts` (macOS/Linux), or `%LOCALAPPDATA%\mimocode\plugins\vibe-pushover.ts` (Windows) |
 | Mistral Vibe | completion | `$VIBE_HOME/hooks.toml` or `~/.vibe/hooks.toml` (experimental hook API) |
 | Oh My Pi | completion, approval | `$PI_CODING_AGENT_DIR/extensions/vibe-pushover/index.ts` or `~/.omp/agent/extensions/vibe-pushover/index.ts` |
 | OpenHands CLI | completion | `~/.openhands/hooks.json` |
-| OpenCode | completion, approval | `$XDG_CONFIG_HOME/opencode/plugins/vibe-pushover.ts` or `~/.config/opencode/plugins/vibe-pushover.ts` |
+| OpenCode | completion, approval, error attention | `$XDG_CONFIG_HOME/opencode/plugins/vibe-pushover.ts` or `~/.config/opencode/plugins/vibe-pushover.ts` |
 | Pi | completion | `$PI_CODING_AGENT_DIR/extensions/vibe-pushover/index.ts` or `~/.pi/agent/extensions/vibe-pushover/index.ts` |
 | Qoder | completion | `~/.qoder/settings.json` |
 | Qwen Code | completion, approval, idle attention | `~/.qwen/settings.json` |
@@ -182,19 +196,21 @@ vibe-pushover install --agent zcode
 | WorkBuddy | completion, approval, failure attention | `~/.workbuddy/settings.json` |
 | ZCode | completion, approval | `~/.zcode/cli/config.json` |
 
-The integrations follow each agent's native hook, plugin, or notification-command mechanism. They preserve existing settings, only replace entries owned by `vibe-pushover`, and repeated installs are idempotent. Copilot's attention event is limited to permission and elicitation dialogs. Droid's attention event can also mean the agent has been idle and is waiting for input. Amp reports its `awaiting-approval` state separately from turn errors. Grok Build maps its top-level `Stop` event to completion and `StopFailure` to attention; its separate `SubagentStop` event is deliberately not installed, so child completions stay quiet. MiMo Code uses its native OpenCode-compatible `session.idle` and `permission.asked` plugin events, but installs into MiMo Code's own config tree and does not share the OpenCode plugin. Qwen sends separate approval notifications and idle-input attention notifications; re-entered active `Stop` hooks are filtered to avoid duplicate or premature completion messages. TRAE maps its top-level `Stop` hook to completion and only its `Notification` events matched as `permission_prompt` to approval; installation preserves unrelated and third-party hooks in the same global manifest. Qoder applies the same active-Stop filter. Hermes sends approval notifications only for human-facing CLI or gateway decisions and skips `approvals.mode=smart` automatic decisions. Oh My Pi ignores `agent_end` events that announce an automatic continuation and reports its native tool-approval event separately. When session logging is enabled, Mistral Vibe filters inherited subagent `post_agent_turn` events using their official `agents/<session>/messages.jsonl` layout; with logging disabled, its payload does not identify subagents, so fan-out can produce extra completion notifications. Aider, Auggie, Cline, Cursor, Gemini, Goose, Kiro, Mistral Vibe, OpenHands CLI, Pi, Qoder, VS Code Agent, and Windsurf currently expose completion notifications only through the installed integration.
+The integrations follow each agent's native hook, plugin, or notification-command mechanism. They preserve existing settings, only replace entries owned by `vibe-pushover`, and repeated installs are idempotent. Copilot's attention event is limited to permission and elicitation dialogs. Droid's attention event can also mean the agent has been idle and is waiting for input. Amp reports its `awaiting-approval` state separately from turn errors. Grok Build maps its top-level `Stop` event to completion and `StopFailure` to attention; its separate `SubagentStop` event is deliberately not installed, so child completions stay quiet. Kilo Code, MiMo Code, and OpenCode use compatible `session.idle`, `permission.asked`, and `session.error` plugin events for completion, approval, and error attention; child-session completion and error events stay quiet. Each installs into its own config tree and does not share a plugin file. Qwen sends separate approval notifications and idle-input attention notifications; re-entered active `Stop` hooks are filtered to avoid duplicate or premature completion messages. TRAE maps its top-level `Stop` hook to completion and only its `Notification` events matched as `permission_prompt` to approval; installation preserves unrelated and third-party hooks in the same global manifest. Qoder applies the same active-Stop filter. Hermes sends approval notifications only for human-facing CLI or gateway decisions and skips `approvals.mode=smart` automatic decisions. Oh My Pi ignores `agent_end` events that announce an automatic continuation and reports its native tool-approval event separately. When session logging is enabled, Mistral Vibe filters inherited subagent `post_agent_turn` events using their official `agents/<session>/messages.jsonl` layout; with logging disabled, its payload does not identify subagents, so fan-out can produce extra completion notifications. Aider, Auggie, Cline, Cursor, Gemini, Goose, Kiro, Mistral Vibe, OpenHands CLI, Pi, Qoder, VS Code Agent, and Windsurf currently expose completion notifications only through the installed integration.
 
 Because Aider supports only one `notifications-command`, installation refuses to replace an existing custom command. Remove or compose that command yourself before retrying if you want `vibe-pushover` to own the setting. Cline also supports one file per event in a hook root; installation refuses to replace a non-`vibe-pushover` `TaskComplete` hook.
 
 Use `--agent-config PATH` to target another agent settings file or `--binary PATH` when installing a binary that is not the currently running executable. If credentials were written with `setup --config PATH`, pass the same path to `install --config PATH`; it will be embedded in both installed hook commands.
 
-Restart the agent after installation. In Amp, use `plugins: reload` from the command palette instead if you want to activate the generated plugin without restarting. Codex may ask you to trust the newly added local hooks before it runs them. Hermes asks for first-use consent for each installed `(event, command)` pair; approve it interactively or manage it with `hermes hooks`, rather than enabling `hooks_auto_accept` globally. Cortex Code and VS Code Agent hook support are currently preview features. Mistral Vibe installation also enables its experimental hook gate in the sibling `config.toml`; Vibe currently exposes a reliable completion hook but no hook that proves a tool is actually waiting for manual approval. Copilot CLI and VS Code Agent discover the same compatible manifest under `~/.copilot/hooks`, so installing either integration configures one shared completion hook; the notification source is detected from each hook payload instead of registering duplicate hooks. Oh My Pi discovers the generated extension automatically unless extension discovery is disabled; named OMP profiles have separate agent directories and should be installed with `--agent-config` for that profile. Auggie's Unix wrapper filters interrupted, error, maximum-iteration, and malformed stops, so only its normal `end_turn` cause sends a completion notification. Windsurf notifications extract the final content line from the Cascade response instead of forwarding the full response payload.
+Restart the agent after installation. In Amp, use `plugins: reload` from the command palette instead if you want to activate the generated plugin without restarting. Codex may ask you to trust the newly added local hooks before it runs them. DotCraft always starts new or changed user hooks as untrusted; open **Settings > Hooks** and trust the installed hooks before using them. Hermes asks for first-use consent for each installed `(event, command)` pair; approve it interactively or manage it with `hermes hooks`, rather than enabling `hooks_auto_accept` globally. Cortex Code and VS Code Agent hook support are currently preview features. Mistral Vibe installation also enables its experimental hook gate in the sibling `config.toml`; Vibe currently exposes a reliable completion hook but no hook that proves a tool is actually waiting for manual approval. Copilot CLI and VS Code Agent discover the same compatible manifest under `~/.copilot/hooks`, so installing either integration configures one shared completion hook; the notification source is detected from each hook payload instead of registering duplicate hooks. Oh My Pi discovers the generated extension automatically unless extension discovery is disabled; named OMP profiles have separate agent directories and should be installed with `--agent-config` for that profile. Auggie's Unix wrapper filters interrupted, error, maximum-iteration, and malformed stops, so only its normal `end_turn` cause sends a completion notification. Windsurf notifications extract the final content line from the Cascade response instead of forwarding the full response payload.
 
 Kimi loads the new TOML hooks when a new session starts; its `Stop` event does not include the final assistant message, so the completion notification uses the compact fallback body `Turn completed.`. Kimi exposes `Stop` just before the turn ends and runs hooks in parallel. If another Kimi `Stop` hook blocks the turn, the notification may arrive before that continuation finishes because Kimi does not expose a later turn-ended hook.
 
 Antigravity CLI installs a native plugin with its documented [`Stop` hook](https://antigravity.google/docs/hooks). A `model_stop` is reported as completion only after `fullyIdle` becomes true; stops with background work are ignored, while `error` and `max_steps_exceeded` become attention notifications. The current hook surface has no approval event. CodeBuddy Code uses its documented [beta hooks](https://www.codebuddy.ai/docs/cli/hooks): `Stop`, `StopFailure`, and `PermissionRequest` become completion, attention, and approval notifications respectively. Re-entered active `Stop` hooks are filtered, but CodeBuddy runs Stop hooks in parallel and exposes no later finalized-stop event; if another Stop hook rejects stopping, the first completion notification can arrive before that continuation finishes. WorkBuddy uses the same lifecycle hook runtime with the independent `.workbuddy` configuration home introduced in its [v2.48.0 release](https://www.workbuddy.ai/docs/cli/release-notes/v2.48.0), so it receives the same three notification types without modifying CodeBuddy settings. CodeWhale, the project formerly named DeepSeek-TUI, uses its native `turn_end` and `on_error` hooks from [`~/.codewhale/config.toml`](https://github.com/Hmbown/CodeWhale); only `turn_end` payloads with `status = "completed"` become completion notifications, while errors are reported by `on_error`. Its current config resolution remains compatible with legacy `~/.deepseek/config.toml`, and it has no separate configurable approval event. An explicit `[hooks] enabled = false` remains respected; set it to `true` to activate installed CodeWhale hooks. These installers retain unrelated hooks and only update entries they can identify as owned by `vibe-pushover`.
 
 ZCode exposes `Stop` and `PermissionRequest` through its native CLI hook configuration and also supports hook-bearing [plugins](https://zcode.z.ai/en/docs/plugin). Installation merges the two notification commands into `hooks.events`, preserves provider settings, existing hook groups, timeouts, and output limits, and enables hooks only when the `enabled` field was absent. The completion body prefers ZCode's compact `responsePreview`; an explicit `hooks.enabled = false` remains respected. ZCode runs `Stop` hooks before deciding whether another hook will continue the turn, and its payload has no later finalized signal, so a completion notification can arrive early when another `Stop` hook requests continuation.
+
+Kilo Code installs a current module-descriptor plugin in its documented [global plugin directory](https://kilo.ai/docs/automate/extending/plugins). Its own desktop attention alerts can remain disabled when Pushover is the preferred phone/watch path. DotCraft installs user-level lifecycle hooks in the documented [`~/.craft/hooks.json`](https://www.dotcraft.net/developing/configuration), preserving unrelated hook groups. The install command reminds you to trust them in **Settings > Hooks**. Its `StopFailure` event reports a failure while processing Stop hooks, not a model-turn failure. DotCraft `Stop` supports rewake feedback, so a completion can arrive before a later continuation requested by another Stop hook; re-entered active Stop calls are filtered.
 
 OpenHands CLI loads the installed global hook from `~/.openhands/hooks.json` for terminal, headless, and ACP sessions. A repository-level `.openhands/hooks.json` takes precedence over the global file instead of merging with it; install that project file explicitly with `--agent-config .openhands/hooks.json` when a repository already has OpenHands hooks. OpenHands exposes a stable `Stop` hook but no hook that proves a tool is waiting for manual approval, so this integration reports completion only. A different `Stop` hook can deny stopping and make the agent continue after the notification because OpenHands does not expose a later per-turn completion event.
 
@@ -249,7 +265,7 @@ Notifications are intentionally compact for phones and watches:
 
 Hook delivery also suppresses exact repeats for three seconds across CLI processes. The fingerprint includes the agent, event, a non-secret hash of the Pushover destination, rendered notification fields, and stable session/turn/tool IDs when available. A failed Pushover request releases its reservation so a later hook can retry; an unavailable or corrupt dedupe cache fails open and sends the notification with a warning. The private cache is stored at `~/Library/Caches/vibe-pushover/dedupe.json` on macOS or `$XDG_CACHE_HOME/vibe-pushover/dedupe.json` on Linux.
 
-`snooze` temporarily suppresses all hook delivery. `focus` is the safer interruption-control mode: it suppresses only completion notifications while approval and attention alerts continue. Each mode stores only its expiry timestamp beside the existing local configuration and resumes automatically after the deadline; `vibe-pushover test --force` remains available for an intentional end-to-end check.
+`snooze` temporarily suppresses all hook delivery. `focus` is the safer interruption-control mode: it suppresses only completion notifications while approval and attention alerts continue. `quiet-hours` applies that blocker-only behavior on a recurring local-time schedule, including windows that cross midnight. Temporary modes store only their expiry timestamp beside the existing local configuration and resume automatically after the deadline; `vibe-pushover test --force` remains available for an intentional end-to-end check.
 
 Profiles control how noticeable those messages are:
 

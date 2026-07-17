@@ -33,17 +33,19 @@ var agentCatalog = []AgentInfo{
 	{Name: "cortex", DisplayName: "Snowflake Cortex Code", Capabilities: "completion+approval", Resource: "hooks (preview)"},
 	{Name: "cursor", DisplayName: "Cursor", Capabilities: "completion only", Resource: "hooks"},
 	{Name: "droid", DisplayName: "Factory Droid", Capabilities: "completion+attention", Resource: "hooks"},
+	{Name: "dotcraft", DisplayName: "DotCraft", Capabilities: "completion+approval+stop-hook-attention", Resource: "hooks"},
 	{Name: "gemini", DisplayName: "Gemini CLI", Capabilities: "completion only", Resource: "hooks"},
 	{Name: "goose", DisplayName: "Goose", Capabilities: "completion only", Resource: "plugin"},
 	{Name: "grok", DisplayName: "Grok Build", Capabilities: "completion+attention", Resource: "hooks"},
 	{Name: "hermes", DisplayName: "Hermes Agent", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "kimi", DisplayName: "Kimi Code CLI", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "kiro", DisplayName: "Kiro", Capabilities: "completion only (macOS/Linux)", Resource: "hooks"},
-	{Name: "mimo", DisplayName: "MiMo Code", Capabilities: "completion+approval", Resource: "plugin"},
+	{Name: "kilo", DisplayName: "Kilo Code", Capabilities: "completion+approval+attention", Resource: "plugin"},
+	{Name: "mimo", DisplayName: "MiMo Code", Capabilities: "completion+approval+attention", Resource: "plugin"},
 	{Name: "mistral", DisplayName: "Mistral Vibe", Capabilities: "completion only", Resource: "hooks (experimental)"},
 	{Name: "omp", DisplayName: "Oh My Pi", Capabilities: "completion+approval", Resource: "extension"},
 	{Name: "openhands", DisplayName: "OpenHands CLI", Capabilities: "completion only", Resource: "hooks"},
-	{Name: "opencode", DisplayName: "OpenCode", Capabilities: "completion+approval", Resource: "plugin"},
+	{Name: "opencode", DisplayName: "OpenCode", Capabilities: "completion+approval+attention", Resource: "plugin"},
 	{Name: "pi", DisplayName: "Pi", Capabilities: "completion only", Resource: "extension"},
 	{Name: "qoder", DisplayName: "Qoder", Capabilities: "completion only", Resource: "hooks"},
 	{Name: "qwen", DisplayName: "Qwen Code", Capabilities: "completion+approval+attention", Resource: "hooks"},
@@ -232,6 +234,8 @@ func DefaultPath(agent string) (string, error) {
 		return filepath.Join(home, ".cursor", "hooks.json"), nil
 	case "droid":
 		return filepath.Join(home, ".factory", "settings.json"), nil
+	case "dotcraft":
+		return filepath.Join(home, ".craft", "hooks.json"), nil
 	case "gemini":
 		return filepath.Join(home, ".gemini", "settings.json"), nil
 	case "goose":
@@ -244,6 +248,8 @@ func DefaultPath(agent string) (string, error) {
 		return filepath.Join(home, ".kimi-code", "config.toml"), nil
 	case "kiro":
 		return filepath.Join(home, ".kiro", "hooks", "vibe-pushover.json"), nil
+	case "kilo":
+		return kiloPluginPath(runtime.GOOS, home, os.Getenv)
 	case "mistral":
 		return filepath.Join(home, ".vibe", "hooks.toml"), nil
 	case "omp":
@@ -388,10 +394,13 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 		return installHermesHooks(path, executable, pushoverConfig)
 	}
 	if agent == "opencode" {
-		return installOpenCodePlugin(path, executable, pushoverConfig, agent, "OpenCode")
+		return installOpenCodePlugin(path, executable, pushoverConfig, agent, "OpenCode", false)
 	}
 	if agent == "mimo" {
-		return installOpenCodePlugin(path, executable, pushoverConfig, agent, "MiMo Code")
+		return installOpenCodePlugin(path, executable, pushoverConfig, agent, "MiMo Code", false)
+	}
+	if agent == "kilo" {
+		return installOpenCodePlugin(path, executable, pushoverConfig, agent, "Kilo Code", true)
 	}
 	if agent == "windsurf" {
 		return installWindsurfHooks(path, executable, pushoverConfig)
@@ -420,10 +429,12 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	if agent == "zcode" {
 		return installZCodeHooks(path, executable, pushoverConfig)
 	}
-	if agent == "codebuddy" || agent == "grok" || agent == "trae" || agent == "workbuddy" {
+	if agent == "codebuddy" || agent == "dotcraft" || agent == "grok" || agent == "trae" || agent == "workbuddy" {
 		var err error
 		displayName := "CodeBuddy Code"
-		if agent == "grok" {
+		if agent == "dotcraft" {
+			displayName = "DotCraft"
+		} else if agent == "grok" {
 			displayName = "Grok Build"
 		} else if agent == "trae" {
 			displayName = "TRAE"
@@ -463,9 +474,11 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 
 	for _, spec := range genericHookSpecs(agent) {
 		command := ""
-		if agent == "codebuddy" || agent == "grok" || agent == "trae" || agent == "workbuddy" {
+		if agent == "codebuddy" || agent == "dotcraft" || agent == "grok" || agent == "trae" || agent == "workbuddy" {
 			displayName := "CodeBuddy Code"
-			if agent == "grok" {
+			if agent == "dotcraft" {
+				displayName = "DotCraft"
+			} else if agent == "grok" {
 				displayName = "Grok Build"
 			} else if agent == "trae" {
 				displayName = "TRAE"
@@ -587,6 +600,12 @@ func genericHookSpecs(agent string) []hookSpec {
 			{Name: "Stop", Event: "turn-complete", Timeout: 10, Flag: "--skip-active-stop"},
 			{Name: "StopFailure", Event: "attention-required", Timeout: 10},
 			{Name: "PermissionRequest", Event: "approval-required", Timeout: 10},
+		}
+	case "dotcraft":
+		return []hookSpec{
+			{Name: "Stop", Event: "turn-complete", Timeout: 10, Async: true, Flag: "--skip-active-stop"},
+			{Name: "StopFailure", Event: "attention-required", Timeout: 10, Async: true},
+			{Name: "PermissionRequest", Event: "approval-required", Timeout: 10, Async: true},
 		}
 	case "gemini":
 		return []hookSpec{{Name: "AfterAgent", Event: "turn-complete", Timeout: 10000}}

@@ -1731,6 +1731,139 @@ func TestFocusCommandShowsStatusAndResumesCompletions(t *testing.T) {
 	}
 }
 
+func TestQuietHoursSuppressCompletionsButKeepBlockerNotifications(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	now := time.Date(2026, time.July, 17, 23, 0, 0, 0, time.FixedZone("PDT", -7*60*60))
+	requests := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"status":1,"request":"request-id"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	newApp := func(stdin string) *cli.Command {
+		return command.New(command.Options{
+			Stdin: bytes.NewBufferString(stdin), Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{},
+			Now: func() time.Time { return now }, HTTPClient: httpClient,
+			Endpoint: "https://pushover.test/messages.json", DedupePath: filepath.Join(t.TempDir(), "dedupe.json"),
+		})
+	}
+	if err := newApp("").Run(context.Background(), []string{
+		"vibe-pushover", "quiet-hours", "--config", path, "22:00", "08:00",
+	}); err != nil {
+		t.Fatalf("quiet-hours Run() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.QuietHoursStart != "22:00" || got.QuietHoursEnd != "08:00" {
+		t.Fatalf("quiet hours = %q-%q", got.QuietHoursStart, got.QuietHoursEnd)
+	}
+	if err := newApp(`{"cwd":"/tmp/demo","last_assistant_message":"Done."}`).Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--config", path, "--agent", "codex", "--event", "turn-complete",
+	}); err != nil {
+		t.Fatalf("completion notify Run() error = %v", err)
+	}
+	if err := newApp(`{"cwd":"/tmp/demo","tool_name":"shell","tool_input":{"command":"git push"}}`).Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--config", path, "--agent", "codex", "--event", "approval-required",
+	}); err != nil {
+		t.Fatalf("approval notify Run() error = %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("Pushover requests = %d, want only the blocker notification", requests)
+	}
+}
+
+func TestTestCommandReportsQuietHoursSuppressionAndSupportsForce(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", QuietHoursStart: "22:00", QuietHoursEnd: "08:00",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	requests := 0
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &bytes.Buffer{},
+		Now: func() time.Time {
+			return time.Date(2026, time.July, 17, 23, 0, 0, 0, time.FixedZone("PDT", -7*60*60))
+		},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			requests++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"status":1,"request":"request-id"}`)),
+				Header:     make(http.Header),
+			}, nil
+		})},
+		Endpoint: "https://pushover.test/messages.json",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "test", "--config", path, "--event", "turn-complete",
+	}); err != nil {
+		t.Fatalf("test Run() error = %v", err)
+	}
+	if requests != 0 || !strings.Contains(stdout.String(), "suppressed during quiet hours 22:00-08:00") {
+		t.Fatalf("quiet-hours test requests = %d, output = %q", requests, stdout.String())
+	}
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "test", "--config", path, "--event", "turn-complete", "--force",
+	}); err != nil {
+		t.Fatalf("forced test Run() error = %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("forced Pushover requests = %d, want 1", requests)
+	}
+}
+
+func TestQuietHoursCommandShowsStatusAndDisablesSchedule(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", QuietHoursStart: "22:00", QuietHoursEnd: "08:00",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var stdout bytes.Buffer
+	app := command.New(command.Options{Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &bytes.Buffer{}})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "quiet-hours", "--config", path}); err != nil {
+		t.Fatalf("status Run() error = %v", err)
+	}
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "quiet-hours", "--config", path, "off"}); err != nil {
+		t.Fatalf("off Run() error = %v", err)
+	}
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "quiet-hours", "--config", path}); err != nil {
+		t.Fatalf("off status Run() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.QuietHoursStart != "" || got.QuietHoursEnd != "" {
+		t.Fatalf("quiet hours were not cleared: %#v", got)
+	}
+	for _, want := range []string{
+		"Quiet hours active daily from 22:00 to 08:00; blocker notifications remain active",
+		"Quiet hours disabled; completion notifications resumed",
+		"Quiet hours are off",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("quiet-hours output does not contain %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
 func TestNotifyCommandSendsKimiStopFallback(t *testing.T) {
 	t.Parallel()
 
@@ -1867,6 +2000,26 @@ func TestInstallCommandWiresCustomPushoverConfig(t *testing.T) {
 	}
 	if !bytes.Contains(data, []byte(`--config '`+pushoverConfig+`'`)) {
 		t.Fatalf("installed hook does not use custom Pushover config: %s", data)
+	}
+}
+
+func TestInstallCommandReportsDotCraftTrustStep(t *testing.T) {
+	t.Parallel()
+
+	stdout := &bytes.Buffer{}
+	app := command.New(command.Options{
+		Stdout: stdout, Stderr: &bytes.Buffer{}, Executable: "/opt/bin/vibe-pushover",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "install", "--agent", "dotcraft",
+		"--agent-config", filepath.Join(t.TempDir(), "hooks.json"),
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, want := range []string{"DotCraft", "Settings", "Hooks", "trust"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("install output does not contain %q: %q", want, stdout.String())
+		}
 	}
 }
 

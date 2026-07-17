@@ -49,6 +49,7 @@ func New(options Options) *cli.Command {
 			profileCommand(options),
 			snoozeCommand(options),
 			focusCommand(options),
+			quietHoursCommand(options),
 			deviceCommand(options),
 			soundCommand(options),
 			agentsCommand(options),
@@ -172,6 +173,62 @@ func focusCommand(options Options) *cli.Command {
 			}
 			_, err = fmt.Fprintf(options.Stdout, "Focus mode active until %s; blocker notifications remain active\n", formatDeadline(until, now.Location()))
 			return err
+		},
+	}
+}
+
+func quietHoursCommand(options Options) *cli.Command {
+	return &cli.Command{
+		Name:      "quiet-hours",
+		Usage:     "suppress completion notifications during a recurring local-time window",
+		ArgsUsage: "[HH:MM HH:MM|off]",
+		Flags:     []cli.Flag{configFlag()},
+		Action: func(_ context.Context, cmd *cli.Command) error {
+			path, err := configPath(cmd.String("config"))
+			if err != nil {
+				return err
+			}
+			credentials, err := config.Load(path)
+			if err != nil {
+				return err
+			}
+			switch cmd.Args().Len() {
+			case 0:
+				if credentials.QuietHoursStart == "" {
+					_, err = fmt.Fprintln(options.Stdout, "Quiet hours are off")
+					return err
+				}
+				_, err = fmt.Fprintf(options.Stdout,
+					"Quiet hours active daily from %s to %s; blocker notifications remain active\n",
+					credentials.QuietHoursStart, credentials.QuietHoursEnd,
+				)
+				return err
+			case 1:
+				value := strings.ToLower(strings.TrimSpace(cmd.Args().First()))
+				if value != "off" && value != "resume" {
+					return errors.New("quiet-hours requires both start and end times, or off")
+				}
+				credentials.QuietHoursStart = ""
+				credentials.QuietHoursEnd = ""
+				if err := config.Save(path, credentials); err != nil {
+					return err
+				}
+				_, err = fmt.Fprintln(options.Stdout, "Quiet hours disabled; completion notifications resumed")
+				return err
+			case 2:
+				credentials.QuietHoursStart = strings.TrimSpace(cmd.Args().Get(0))
+				credentials.QuietHoursEnd = strings.TrimSpace(cmd.Args().Get(1))
+				if err := config.Save(path, credentials); err != nil {
+					return err
+				}
+				_, err = fmt.Fprintf(options.Stdout,
+					"Quiet hours active daily from %s to %s; blocker notifications remain active\n",
+					credentials.QuietHoursStart, credentials.QuietHoursEnd,
+				)
+				return err
+			default:
+				return errors.New("quiet-hours accepts start and end times, or off")
+			}
 		},
 	}
 }
@@ -576,6 +633,12 @@ func installAgent(stdout io.Writer, agent, agentConfig, executable, pushoverConf
 			return err
 		}
 	}
+	if agent == "dotcraft" {
+		_, err = fmt.Fprintln(stdout, "DotCraft requires new or changed user hooks to be trusted in Settings > Hooks before they can run.")
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -685,7 +748,7 @@ func notifyCommand(options Options) *cli.Command {
 						err = loadErr
 					} else if credentials.IsSnoozed(options.Now()) {
 						return nil
-					} else if event == notification.EventTurnComplete && credentials.IsFocused(options.Now()) {
+					} else if event == notification.EventTurnComplete && (credentials.IsFocused(options.Now()) || credentials.IsQuietHours(options.Now())) {
 						return nil
 					} else if !notification.ShouldDeliver(event, credentials.NotificationProfile) {
 						return nil
@@ -747,7 +810,7 @@ func testCommand(options Options) *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "event", Usage: "turn-complete, approval-required, or attention-required", Value: "approval-required"},
 			&cli.StringFlag{Name: "message", Usage: "test message body", Value: "Test notification delivered successfully."},
-			&cli.BoolFlag{Name: "force", Usage: "send even when notifications are snoozed or focus mode suppresses completion"},
+			&cli.BoolFlag{Name: "force", Usage: "send even when snooze, focus, or quiet hours suppress delivery"},
 			configFlag(),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -774,6 +837,13 @@ func testCommand(options Options) *cli.Command {
 				_, err = fmt.Fprintf(options.Stdout,
 					"Test %s notification suppressed while focus mode is active until %s; use --force to send\n",
 					event, formatDeadline(until, now.Location()),
+				)
+				return err
+			}
+			if event == notification.EventTurnComplete && credentials.IsQuietHours(now) && !cmd.Bool("force") {
+				_, err = fmt.Fprintf(options.Stdout,
+					"Test %s notification suppressed during quiet hours %s-%s; use --force to send\n",
+					event, credentials.QuietHoursStart, credentials.QuietHoursEnd,
 				)
 				return err
 			}

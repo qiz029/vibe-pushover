@@ -460,6 +460,8 @@ func TestBuildUsesProductNamesInNotificationTitles(t *testing.T) {
 
 	for agent, want := range map[string]string{
 		"cortex":    "✓ Cortex Code finished · demo",
+		"dotcraft":  "✓ DotCraft finished · demo",
+		"kilo":      "✓ Kilo Code finished · demo",
 		"mimo":      "✓ MiMo Code finished · demo",
 		"mistral":   "✓ Mistral Vibe finished · demo",
 		"omp":       "✓ Oh My Pi finished · demo",

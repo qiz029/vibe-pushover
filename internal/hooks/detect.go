@@ -38,12 +38,14 @@ func DetectedAgents() ([]AgentInfo, error) {
 		"cortex":      {filepath.Join(home, ".snowflake", "cortex")},
 		"cursor":      {filepath.Join(home, ".cursor")},
 		"droid":       {filepath.Join(home, ".factory")},
+		"dotcraft":    {filepath.Join(home, ".craft")},
 		"gemini":      {filepath.Join(home, ".gemini", "settings.json")},
 		"goose":       {filepath.Join(configHome, "goose"), filepath.Join(home, ".local", "share", "goose")},
 		"grok":        {filepath.Join(home, ".grok")},
 		"hermes":      {filepath.Join(home, ".hermes")},
 		"kimi":        {filepath.Join(home, ".kimi-code")},
 		"kiro":        {filepath.Join(home, ".kiro")},
+		"kilo":        {filepath.Join(configHome, "kilo")},
 		"mimo":        {filepath.Join(configHome, "mimocode")},
 		"mistral":     {filepath.Join(home, ".vibe")},
 		"omp":         {filepath.Join(home, ".omp")},
@@ -136,6 +138,8 @@ func overrideDetectionMarkers(agent string, resolvedPaths []string) ([]string, e
 		if os.Getenv("KIMI_CODE_HOME") != "" {
 			levels = 1
 		}
+	case "kilo":
+		levels = 2
 	case "mimo":
 		// MiMo uses LOCALAPPDATA on Windows and XDG_CONFIG_HOME elsewhere.
 		levels = 2
