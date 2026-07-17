@@ -35,6 +35,13 @@ func TestDetectedAgentsFindsEverySupportedConfigHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	vscodeMarker := filepath.Join(".config", "Code", "User")
+	switch runtime.GOOS {
+	case "darwin":
+		vscodeMarker = filepath.Join("Library", "Application Support", "Code", "User")
+	case "windows":
+		vscodeMarker = filepath.Join("AppData", "Roaming", "Code", "User")
+	}
 	markers := []string{
 		".aider",
 		filepath.Join(".config", "amp"),
@@ -68,7 +75,7 @@ func TestDetectedAgentsFindsEverySupportedConfigHome(t *testing.T) {
 		".rovodev",
 		".tabnine",
 		".trae",
-		filepath.Join("Library", "Application Support", "Code", "User"),
+		vscodeMarker,
 		filepath.Join(".codeium", "windsurf"),
 		".workbuddy",
 		".zcode",
