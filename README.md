@@ -5,7 +5,7 @@
 - finishes a turn;
 - needs manual approval or otherwise needs your attention.
 
-The CLI currently integrates with 21 coding agents: Aider, Amp, Augment Auggie, Claude Code, Codex CLI, GitHub Copilot CLI, Snowflake Cortex Code, Cursor, Factory Droid, Gemini CLI, Goose, Hermes Agent, Kimi Code CLI, Kiro, Oh My Pi, OpenCode, Pi, Qoder, Qwen Code, VS Code Agent, and Windsurf. It is written in Go and uses [`urfave/cli`](https://github.com/urfave/cli).
+The CLI currently integrates with 22 coding agents: Aider, Amp, Augment Auggie, Claude Code, Codex CLI, GitHub Copilot CLI, Snowflake Cortex Code, Cursor, Factory Droid, Gemini CLI, Goose, Hermes Agent, Kimi Code CLI, Kiro, Mistral Vibe, Oh My Pi, OpenCode, Pi, Qoder, Qwen Code, VS Code Agent, and Windsurf. It is written in Go and uses [`urfave/cli`](https://github.com/urfave/cli).
 
 ## Install
 
@@ -76,6 +76,7 @@ List the supported agents and their capabilities, then install one or more integ
 vibe-pushover agents
 vibe-pushover install --agent codex
 vibe-pushover install --agent gemini
+vibe-pushover install --agent mistral
 vibe-pushover install --agent omp
 vibe-pushover install --agent opencode
 ```
@@ -96,6 +97,7 @@ vibe-pushover install --agent opencode
 | Hermes Agent | completion, approval | `$HERMES_HOME/config.yaml` or `~/.hermes/config.yaml` |
 | Kimi Code CLI | completion, approval | `$KIMI_CODE_HOME/config.toml` or `~/.kimi-code/config.toml` |
 | Kiro | completion (macOS/Linux) | `~/.kiro/hooks/vibe-pushover.json` |
+| Mistral Vibe | completion | `$VIBE_HOME/hooks.toml` or `~/.vibe/hooks.toml` (experimental hook API) |
 | Oh My Pi | completion, approval | `$PI_CODING_AGENT_DIR/extensions/vibe-pushover/index.ts` or `~/.omp/agent/extensions/vibe-pushover/index.ts` |
 | OpenCode | completion, approval | `$XDG_CONFIG_HOME/opencode/plugins/vibe-pushover.ts` or `~/.config/opencode/plugins/vibe-pushover.ts` |
 | Pi | completion | `$PI_CODING_AGENT_DIR/extensions/vibe-pushover/index.ts` or `~/.pi/agent/extensions/vibe-pushover/index.ts` |
@@ -104,19 +106,19 @@ vibe-pushover install --agent opencode
 | VS Code Agent | completion | `$COPILOT_HOME/hooks/vibe-pushover.json` or `~/.copilot/hooks/vibe-pushover.json` (preview hook API) |
 | Windsurf | completion | `~/.codeium/windsurf/hooks.json` |
 
-The integrations follow each agent's native hook, plugin, or notification-command mechanism. They preserve existing settings, only replace entries owned by `vibe-pushover`, and repeated installs are idempotent. Copilot's attention event is limited to permission and elicitation dialogs. Droid's attention event can also mean the agent has been idle and is waiting for input. Amp reports its `awaiting-approval` state separately from turn errors. Qwen sends separate approval notifications and idle-input attention notifications; re-entered active `Stop` hooks are filtered to avoid duplicate or premature completion messages. Qoder applies the same active-Stop filter. Hermes sends approval notifications only for human-facing CLI or gateway decisions and skips `approvals.mode=smart` automatic decisions. Oh My Pi ignores `agent_end` events that announce an automatic continuation and reports its native tool-approval event separately. Aider, Auggie, Cursor, Gemini, Goose, Kiro, Pi, Qoder, VS Code Agent, and Windsurf currently expose completion notifications only through the installed integration.
+The integrations follow each agent's native hook, plugin, or notification-command mechanism. They preserve existing settings, only replace entries owned by `vibe-pushover`, and repeated installs are idempotent. Copilot's attention event is limited to permission and elicitation dialogs. Droid's attention event can also mean the agent has been idle and is waiting for input. Amp reports its `awaiting-approval` state separately from turn errors. Qwen sends separate approval notifications and idle-input attention notifications; re-entered active `Stop` hooks are filtered to avoid duplicate or premature completion messages. Qoder applies the same active-Stop filter. Hermes sends approval notifications only for human-facing CLI or gateway decisions and skips `approvals.mode=smart` automatic decisions. Oh My Pi ignores `agent_end` events that announce an automatic continuation and reports its native tool-approval event separately. When session logging is enabled, Mistral Vibe filters inherited subagent `post_agent_turn` events using their official `agents/<session>/messages.jsonl` layout; with logging disabled, its payload does not identify subagents, so fan-out can produce extra completion notifications. Aider, Auggie, Cursor, Gemini, Goose, Kiro, Mistral Vibe, Pi, Qoder, VS Code Agent, and Windsurf currently expose completion notifications only through the installed integration.
 
 Because Aider supports only one `notifications-command`, installation refuses to replace an existing custom command. Remove or compose that command yourself before retrying if you want `vibe-pushover` to own the setting.
 
 Use `--agent-config PATH` to target another agent settings file or `--binary PATH` when installing a binary that is not the currently running executable. If credentials were written with `setup --config PATH`, pass the same path to `install --config PATH`; it will be embedded in both installed hook commands.
 
-Restart the agent after installation. In Amp, use `plugins: reload` from the command palette instead if you want to activate the generated plugin without restarting. Codex may ask you to trust the newly added local hooks before it runs them. Hermes asks for first-use consent for each installed `(event, command)` pair; approve it interactively or manage it with `hermes hooks`, rather than enabling `hooks_auto_accept` globally. Cortex Code and VS Code Agent hook support are currently preview features. Copilot CLI and VS Code Agent discover the same compatible manifest under `~/.copilot/hooks`, so installing either integration configures one shared completion hook; the notification source is detected from each hook payload instead of registering duplicate hooks. Oh My Pi discovers the generated extension automatically unless extension discovery is disabled; named OMP profiles have separate agent directories and should be installed with `--agent-config` for that profile. Auggie's Unix wrapper filters interrupted, error, maximum-iteration, and malformed stops, so only its normal `end_turn` cause sends a completion notification. Windsurf notifications extract the final content line from the Cascade response instead of forwarding the full response payload.
+Restart the agent after installation. In Amp, use `plugins: reload` from the command palette instead if you want to activate the generated plugin without restarting. Codex may ask you to trust the newly added local hooks before it runs them. Hermes asks for first-use consent for each installed `(event, command)` pair; approve it interactively or manage it with `hermes hooks`, rather than enabling `hooks_auto_accept` globally. Cortex Code and VS Code Agent hook support are currently preview features. Mistral Vibe installation also enables its experimental hook gate in the sibling `config.toml`; Vibe currently exposes a reliable completion hook but no hook that proves a tool is actually waiting for manual approval. Copilot CLI and VS Code Agent discover the same compatible manifest under `~/.copilot/hooks`, so installing either integration configures one shared completion hook; the notification source is detected from each hook payload instead of registering duplicate hooks. Oh My Pi discovers the generated extension automatically unless extension discovery is disabled; named OMP profiles have separate agent directories and should be installed with `--agent-config` for that profile. Auggie's Unix wrapper filters interrupted, error, maximum-iteration, and malformed stops, so only its normal `end_turn` cause sends a completion notification. Windsurf notifications extract the final content line from the Cascade response instead of forwarding the full response payload.
 
 Kimi loads the new TOML hooks when a new session starts; its `Stop` event does not include the final assistant message, so the completion notification uses the compact fallback body `Turn completed.`. Kimi exposes `Stop` just before the turn ends and runs hooks in parallel. If another Kimi `Stop` hook blocks the turn, the notification may arrive before that continuation finishes because Kimi does not expose a later turn-ended hook.
 
 Pi deliberately has no built-in permission popups, so its integration currently sends turn-complete notifications only. `vibe-pushover` does not add a confirmation policy or turn every Pi tool call into a manual approval.
 
-Cline, Roo Code, and Continue have been audited but are not listed as supported because they do not currently expose a stable user-level turn-complete or approval hook suitable for this integration. Warp already provides its own desktop notifications for completed agents and agents that need attention, but does not expose a corresponding external lifecycle hook. `vibe-pushover` intentionally avoids log polling for these tools because it would be fragile and could leak conversation content.
+Cline, Roo Code, Continue, and Crush have been audited but are not listed as supported because they do not currently expose a stable user-level turn-complete or approval hook suitable for this integration. Crush's preliminary hook API currently exposes only `PreToolUse`; its built-in desktop notifications are not an external lifecycle hook. Warp already provides its own desktop notifications for completed agents and agents that need attention, but does not expose a corresponding external lifecycle hook. `vibe-pushover` intentionally avoids log polling for these tools because it would be fragile and could leak conversation content.
 
 Installed hooks use `--ignore-errors`: a network or Pushover failure is written to the agent's stderr but does not fail the agent turn.
 
@@ -126,6 +128,9 @@ The installed command is also usable with any agent that sends a JSON hook paylo
 
 ```sh
 printf '%s' '{"cwd":"/tmp/demo","last_assistant_message":"Done"}' | \
+  vibe-pushover notify --agent my-agent --event turn-complete
+
+printf '%s' '{"cwd":"/tmp/demo","message":"Done","session_url":"https://example.com/session/42"}' | \
   vibe-pushover notify --agent my-agent --event turn-complete
 
 printf '%s' '{"cwd":"/tmp/demo","tool_name":"Bash","tool_input":{"command":"make deploy"}}' | \
@@ -149,6 +154,7 @@ Notifications are intentionally compact for phones and watches:
 - A completed turn uses a title such as `✓ Codex finished · vibe-pushover` and the first useful line of the agent's final message, skipping Markdown headings when a result line follows and truncating it to 180 Unicode characters. It is silent and expires after one hour.
 - An approval request uses a title such as `⚠ Codex needs approval · vibe-pushover` and shows only the tool plus its command or reason, truncated to 300 Unicode characters. It is high priority, uses Pushover's `persistent` sound, and expires after 30 minutes.
 - An attention notification uses a title such as `⚠ Droid needs attention · vibe-pushover`, carries a compact reason, and uses the same high-priority delivery as an approval request.
+- If a hook payload supplies an HTTP(S) `url`, `session_url`, `web_url`, or `details_url`, the notification includes Pushover's supplementary `Open result` or `Open agent` action. Unsafe and local-only URL schemes are ignored.
 
 Hook delivery also suppresses exact repeats for three seconds across CLI processes. The fingerprint includes the agent, event, a non-secret hash of the Pushover destination, rendered notification fields, and stable session/turn/tool IDs when available. A failed Pushover request releases its reservation so a later hook can retry; an unavailable or corrupt dedupe cache fails open and sends the notification with a warning. The private cache is stored at `~/Library/Caches/vibe-pushover/dedupe.json` on macOS or `$XDG_CACHE_HOME/vibe-pushover/dedupe.json` on Linux.
 

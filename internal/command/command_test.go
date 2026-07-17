@@ -100,11 +100,13 @@ func TestNotifyCommandSendsHookPayload(t *testing.T) {
 			t.Errorf("ParseForm() error = %v", err)
 		}
 		received = map[string]string{
-			"title":    r.Form.Get("title"),
-			"message":  r.Form.Get("message"),
-			"priority": r.Form.Get("priority"),
-			"sound":    r.Form.Get("sound"),
-			"ttl":      r.Form.Get("ttl"),
+			"title":     r.Form.Get("title"),
+			"message":   r.Form.Get("message"),
+			"priority":  r.Form.Get("priority"),
+			"sound":     r.Form.Get("sound"),
+			"ttl":       r.Form.Get("ttl"),
+			"url":       r.Form.Get("url"),
+			"url_title": r.Form.Get("url_title"),
 		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
@@ -114,7 +116,7 @@ func TestNotifyCommandSendsHookPayload(t *testing.T) {
 	})}
 
 	app := command.New(command.Options{
-		Stdin:      bytes.NewBufferString(`{"cwd":"/tmp/demo","tool_name":"Bash","tool_input":{"command":"make deploy"}}`),
+		Stdin:      bytes.NewBufferString(`{"cwd":"/tmp/demo","tool_name":"Bash","tool_input":{"command":"make deploy"},"session_url":"https://example.com/agent/42"}`),
 		Stdout:     &bytes.Buffer{},
 		Stderr:     &bytes.Buffer{},
 		HTTPClient: httpClient,
@@ -144,6 +146,9 @@ func TestNotifyCommandSendsHookPayload(t *testing.T) {
 	}
 	if got["ttl"] != "1800" {
 		t.Fatalf("ttl = %q, want 1800", got["ttl"])
+	}
+	if got["url"] != "https://example.com/agent/42" || got["url_title"] != "Open agent" {
+		t.Fatalf("supplementary action = %q (%q)", got["url"], got["url_title"])
 	}
 }
 
@@ -557,6 +562,87 @@ func TestNotifyCommandSkipsGenericActiveStop(t *testing.T) {
 	}
 }
 
+func TestNotifyCommandSkipsMistralSubagentTurn(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	requests := 0
+	app := command.New(command.Options{
+		Stdin:  bytes.NewBufferString(`{"session_id":"child","parent_session_id":"parent","transcript_path":"/tmp/session/agents/reviewer/messages.jsonl","cwd":"/tmp/demo"}`),
+		Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			requests++
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"status":1}`)), Header: make(http.Header)}, nil
+		})},
+		Endpoint: "https://pushover.test/messages.json",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--config", path, "--agent", "mistral", "--event", "turn-complete", "--skip-mistral-subagent",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if requests != 0 {
+		t.Fatalf("Pushover requests = %d, want none for a subagent turn", requests)
+	}
+}
+
+func TestNotifyCommandDoesNotSkipMistralForkedTopLevelTurn(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	requests := 0
+	app := command.New(command.Options{
+		Stdin:  bytes.NewBufferString(`{"session_id":"fork","parent_session_id":"original","transcript_path":"/tmp/session/messages.jsonl","cwd":"/tmp/demo"}`),
+		Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			requests++
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"status":1}`)), Header: make(http.Header)}, nil
+		})},
+		Endpoint: "https://pushover.test/messages.json",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--config", path, "--agent", "mistral", "--event", "turn-complete", "--skip-mistral-subagent",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("Pushover requests = %d, want one for a forked top-level turn", requests)
+	}
+}
+
+func TestNotifyCommandDoesNotSkipMistralUnrelatedAgentsDirectory(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	requests := 0
+	app := command.New(command.Options{
+		Stdin:  bytes.NewBufferString(`{"session_id":"fork","parent_session_id":"original","transcript_path":"/tmp/agents/archive/session/messages.jsonl","cwd":"/tmp/demo"}`),
+		Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			requests++
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"status":1}`)), Header: make(http.Header)}, nil
+		})},
+		Endpoint: "https://pushover.test/messages.json",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--config", path, "--agent", "mistral", "--event", "turn-complete", "--skip-mistral-subagent",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("Pushover requests = %d, want one for an unrelated agents directory", requests)
+	}
+}
+
 func TestNotifyCommandSkipsHermesSmartApproval(t *testing.T) {
 	t.Parallel()
 
@@ -585,7 +671,7 @@ func TestPreviewCommandShowsNotificationWithoutCredentials(t *testing.T) {
 
 	var stdout bytes.Buffer
 	app := command.New(command.Options{
-		Stdin:  bytes.NewBufferString(`{"cwd":"/tmp/demo","last_assistant_message":"All tests pass.\nMore detail."}`),
+		Stdin:  bytes.NewBufferString(`{"cwd":"/tmp/demo","last_assistant_message":"All tests pass.\nMore detail.","session_url":"https://example.com/agent/42"}`),
 		Stdout: &stdout, Stderr: &bytes.Buffer{},
 	})
 	if err := app.Run(context.Background(), []string{
@@ -595,7 +681,7 @@ func TestPreviewCommandShowsNotificationWithoutCredentials(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"✓ Gemini finished · demo", "All tests pass.", "Priority: 0", "Sound: pushover", "TTL: 1h0m0s",
+		"✓ Gemini finished · demo", "All tests pass.", "Priority: 0", "Sound: pushover", "TTL: 1h0m0s", "Action: Open result (https://example.com/agent/42)",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("preview output does not contain %q:\n%s", want, output)
@@ -661,7 +747,7 @@ func TestAgentsCommandShowsCapabilities(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"aider", "amp", "auggie", "claude", "codex", "copilot", "cortex", "cursor", "droid", "gemini", "goose", "hermes", "kimi", "kiro", "omp", "opencode", "pi", "qoder", "qwen", "vscode", "windsurf",
+		"aider", "amp", "auggie", "claude", "codex", "copilot", "cortex", "cursor", "droid", "gemini", "goose", "hermes", "kimi", "kiro", "mistral", "omp", "opencode", "pi", "qoder", "qwen", "vscode", "windsurf",
 		"completion+approval", "completion+approval+attention", "completion+attention", "completion only",
 	} {
 		if !strings.Contains(output, want) {

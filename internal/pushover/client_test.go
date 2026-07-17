@@ -20,13 +20,15 @@ func TestClientSendsMessage(t *testing.T) {
 			t.Fatalf("ParseForm() error = %v", err)
 		}
 		want := map[string]string{
-			"token":    "app-token",
-			"user":     "user-key",
-			"title":    "Agent turn complete",
-			"message":  "codex finished in vibe-pushover",
-			"priority": "0",
-			"sound":    "none",
-			"ttl":      "3600",
+			"token":     "app-token",
+			"user":      "user-key",
+			"title":     "Agent turn complete",
+			"message":   "codex finished in vibe-pushover",
+			"priority":  "0",
+			"sound":     "none",
+			"ttl":       "3600",
+			"url":       "https://example.com/agent/sessions/42",
+			"url_title": "Open result",
 		}
 		for key, value := range want {
 			if got := r.Form.Get(key); got != value {
@@ -45,6 +47,8 @@ func TestClientSendsMessage(t *testing.T) {
 		Priority: 0,
 		Sound:    "none",
 		TTL:      3600,
+		URL:      "https://example.com/agent/sessions/42",
+		URLTitle: "Open result",
 	})
 	if err != nil {
 		t.Fatalf("Send() error = %v", err)

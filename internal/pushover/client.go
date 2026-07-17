@@ -18,6 +18,8 @@ type Message struct {
 	UserKey  string
 	Title    string
 	Body     string
+	URL      string
+	URLTitle string
 	Priority int
 	Sound    string
 	TTL      int
@@ -45,6 +47,12 @@ func (c *Client) Send(ctx context.Context, message Message) error {
 	}
 	if message.TTL > 0 {
 		form.Set("ttl", strconv.Itoa(message.TTL))
+	}
+	if message.URL != "" {
+		form.Set("url", message.URL)
+		if message.URLTitle != "" {
+			form.Set("url_title", message.URLTitle)
+		}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, strings.NewReader(form.Encode()))
 	if err != nil {

@@ -33,6 +33,7 @@ var agentCatalog = []AgentInfo{
 	{Name: "hermes", DisplayName: "Hermes Agent", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "kimi", DisplayName: "Kimi Code CLI", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "kiro", DisplayName: "Kiro", Capabilities: "completion only (macOS/Linux)", Resource: "hooks"},
+	{Name: "mistral", DisplayName: "Mistral Vibe", Capabilities: "completion only", Resource: "hooks (experimental)"},
 	{Name: "omp", DisplayName: "Oh My Pi", Capabilities: "completion+approval", Resource: "extension"},
 	{Name: "opencode", DisplayName: "OpenCode", Capabilities: "completion+approval", Resource: "plugin"},
 	{Name: "pi", DisplayName: "Pi", Capabilities: "completion only", Resource: "extension"},
@@ -93,6 +94,15 @@ func DefaultPath(agent string) (string, error) {
 				return "", fmt.Errorf("resolve Kimi Code home: %w", err)
 			}
 			return filepath.Join(dataDir, "config.toml"), nil
+		}
+	}
+	if agent == "mistral" {
+		if vibeHome := os.Getenv("VIBE_HOME"); vibeHome != "" {
+			vibeHome, err := expandHome(vibeHome)
+			if err != nil {
+				return "", fmt.Errorf("resolve Mistral Vibe home: %w", err)
+			}
+			return filepath.Join(vibeHome, "hooks.toml"), nil
 		}
 	}
 	if agent == "pi" {
@@ -156,6 +166,8 @@ func DefaultPath(agent string) (string, error) {
 		return filepath.Join(home, ".kimi-code", "config.toml"), nil
 	case "kiro":
 		return filepath.Join(home, ".kiro", "hooks", "vibe-pushover.json"), nil
+	case "mistral":
+		return filepath.Join(home, ".vibe", "hooks.toml"), nil
 	case "omp":
 		return filepath.Join(home, ".omp", "agent", "extensions", "vibe-pushover", "index.ts"), nil
 	case "opencode":
@@ -240,6 +252,9 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	}
 	if agent == "kiro" {
 		return installKiroHooks(path, executable, pushoverConfig)
+	}
+	if agent == "mistral" {
+		return installMistralVibeHooks(path, executable, pushoverConfig)
 	}
 	if agent == "omp" {
 		return installOMPExtension(path, executable, pushoverConfig)

@@ -334,6 +334,237 @@ func TestInstallCreatesKiroCompletionHook(t *testing.T) {
 	}
 }
 
+func TestInstallAddsMistralVibeCompletionHook(t *testing.T) {
+	t.Parallel()
+
+	dir := filepath.Join(t.TempDir(), ".vibe")
+	hooksPath := filepath.Join(dir, "hooks.toml")
+	configPath := filepath.Join(dir, "config.toml")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(hooksPath, []byte("# personal hook\n[[hooks]]\nname = \"lint\"\ntype = \"after_tool\"\nmatch = \"bash\"\ncommand = \"make lint\"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(hooks) error = %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte("# personal config\nactive_model = \"devstral\"\nenable_experimental_hooks = false\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(config) error = %v", err)
+	}
+
+	changed, err := hooks.Install("mistral", hooksPath, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+	hooksData, err := os.ReadFile(hooksPath)
+	if err != nil {
+		t.Fatalf("ReadFile(hooks) error = %v", err)
+	}
+	var hooksRoot struct {
+		Hooks []struct {
+			Name        string  `toml:"name"`
+			Type        string  `toml:"type"`
+			Command     string  `toml:"command"`
+			Timeout     float64 `toml:"timeout"`
+			Description string  `toml:"description"`
+		} `toml:"hooks"`
+	}
+	if err := toml.Unmarshal(hooksData, &hooksRoot); err != nil {
+		t.Fatalf("Unmarshal(hooks) error = %v\n%s", err, hooksData)
+	}
+	if len(hooksRoot.Hooks) != 2 || hooksRoot.Hooks[0].Name != "lint" {
+		t.Fatalf("Mistral hooks did not preserve existing entries: %#v", hooksRoot.Hooks)
+	}
+	owned := hooksRoot.Hooks[1]
+	wantCommand := "'/opt/bin/vibe-pushover' notify --agent mistral --event turn-complete --ignore-errors --skip-mistral-subagent --config '/tmp/pushover.json'"
+	if owned.Name != "vibe-pushover-turn-complete" || owned.Type != "post_agent_turn" || owned.Command != wantCommand || owned.Timeout != 10 || owned.Description == "" {
+		t.Fatalf("Mistral completion hook = %#v", owned)
+	}
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile(config) error = %v", err)
+	}
+	var configRoot map[string]any
+	if err := toml.Unmarshal(configData, &configRoot); err != nil {
+		t.Fatalf("Unmarshal(config) error = %v\n%s", err, configData)
+	}
+	if configRoot["enable_experimental_hooks"] != true || configRoot["active_model"] != "devstral" || !bytes.Contains(configData, []byte("# personal config")) {
+		t.Fatalf("Mistral config not enabled or not preserved: %#v\n%s", configRoot, configData)
+	}
+	changed, err = hooks.Install("mistral", hooksPath, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed Mistral Vibe integration")
+	}
+}
+
+func TestInstallMistralVibeAddsFeatureFlagBeforeExistingTables(t *testing.T) {
+	t.Parallel()
+
+	dir := filepath.Join(t.TempDir(), ".vibe")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	hooksPath := filepath.Join(dir, "hooks.toml")
+	configPath := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(configPath, []byte("[tools.bash]\npermission = \"ask\"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(config) error = %v", err)
+	}
+	if _, err := hooks.Install("mistral", hooksPath, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile(config) error = %v", err)
+	}
+	var root map[string]any
+	if err := toml.Unmarshal(data, &root); err != nil {
+		t.Fatalf("Unmarshal(config) error = %v\n%s", err, data)
+	}
+	if root["enable_experimental_hooks"] != true {
+		t.Fatalf("enable_experimental_hooks = %#v, want true\n%s", root["enable_experimental_hooks"], data)
+	}
+	tools, _ := root["tools"].(map[string]any)
+	bash, _ := tools["bash"].(map[string]any)
+	if bash["permission"] != "ask" {
+		t.Fatalf("tools.bash was not preserved: %#v", root)
+	}
+}
+
+func TestInstallMistralVibeRefusesUnownedHook(t *testing.T) {
+	t.Parallel()
+
+	dir := filepath.Join(t.TempDir(), ".vibe")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	hooksPath := filepath.Join(dir, "hooks.toml")
+	configPath := filepath.Join(dir, "config.toml")
+	originalHooks := []byte("[[hooks]]\nname = \"vibe-pushover-turn-complete\"\ntype = \"post_agent_turn\"\ncommand = \"personal-notifier\"\n")
+	originalConfig := []byte("enable_experimental_hooks = false\n")
+	if err := os.WriteFile(hooksPath, originalHooks, 0o600); err != nil {
+		t.Fatalf("WriteFile(hooks) error = %v", err)
+	}
+	if err := os.WriteFile(configPath, originalConfig, 0o600); err != nil {
+		t.Fatalf("WriteFile(config) error = %v", err)
+	}
+	if _, err := hooks.Install("mistral", hooksPath, "/opt/bin/vibe-pushover", ""); err == nil {
+		t.Fatal("Install() replaced an unowned Mistral Vibe hook")
+	}
+	gotHooks, _ := os.ReadFile(hooksPath)
+	gotConfig, _ := os.ReadFile(configPath)
+	if !bytes.Equal(gotHooks, originalHooks) || !bytes.Equal(gotConfig, originalConfig) {
+		t.Fatalf("Mistral files changed after refused install:\nhooks:\n%s\nconfig:\n%s", gotHooks, gotConfig)
+	}
+}
+
+func TestInstallMistralVibeRefusesUnownedDuplicateBesideManagedHook(t *testing.T) {
+	t.Parallel()
+
+	dir := filepath.Join(t.TempDir(), ".vibe")
+	hooksPath := filepath.Join(dir, "hooks.toml")
+	if _, err := hooks.Install("mistral", hooksPath, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("first Install() error = %v", err)
+	}
+	managed, err := os.ReadFile(hooksPath)
+	if err != nil {
+		t.Fatalf("ReadFile(hooks) error = %v", err)
+	}
+	original := append(append([]byte(nil), managed...), []byte("\n[[hooks]]\nname = \"vibe-pushover-turn-complete\"\ntype = \"post_agent_turn\"\ncommand = \"personal-notifier\"\n")...)
+	if err := os.WriteFile(hooksPath, original, 0o600); err != nil {
+		t.Fatalf("WriteFile(hooks) error = %v", err)
+	}
+	if _, err := hooks.Install("mistral", hooksPath, "/opt/bin/vibe-pushover", ""); err == nil {
+		t.Fatal("Install() accepted an unowned duplicate beside the managed hook")
+	}
+	got, _ := os.ReadFile(hooksPath)
+	if !bytes.Equal(got, original) {
+		t.Fatalf("Mistral hooks changed after refused install:\n%s", got)
+	}
+}
+
+func TestInstallMistralVibePreservesConfigSymlinks(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	vibeDir := filepath.Join(dir, ".vibe")
+	dotfilesDir := filepath.Join(dir, "dotfiles")
+	if err := os.MkdirAll(vibeDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll(vibe) error = %v", err)
+	}
+	if err := os.MkdirAll(dotfilesDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll(dotfiles) error = %v", err)
+	}
+	hooksTarget := filepath.Join(dotfilesDir, "hooks.toml")
+	configTarget := filepath.Join(dotfilesDir, "config.toml")
+	if err := os.WriteFile(hooksTarget, []byte("# hooks\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(hooks target) error = %v", err)
+	}
+	if err := os.WriteFile(configTarget, []byte("# config\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(config target) error = %v", err)
+	}
+	hooksPath := filepath.Join(vibeDir, "hooks.toml")
+	configPath := filepath.Join(vibeDir, "config.toml")
+	if err := os.Symlink(hooksTarget, hooksPath); err != nil {
+		t.Fatalf("Symlink(hooks) error = %v", err)
+	}
+	if err := os.Symlink(configTarget, configPath); err != nil {
+		t.Fatalf("Symlink(config) error = %v", err)
+	}
+	if _, err := hooks.Install("mistral", hooksPath, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	for _, path := range []string{hooksPath, configPath} {
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatalf("Lstat(%q) error = %v", path, err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("Install() replaced symlink %q", path)
+		}
+	}
+	hooksData, _ := os.ReadFile(hooksTarget)
+	configData, _ := os.ReadFile(configTarget)
+	if !bytes.Contains(hooksData, []byte("vibe-pushover-turn-complete")) || !bytes.Contains(configData, []byte("enable_experimental_hooks = true")) {
+		t.Fatalf("symlink targets were not updated:\nhooks:\n%s\nconfig:\n%s", hooksData, configData)
+	}
+}
+
+func TestInstallMistralVibeIgnoresMarkersInsideMultilineString(t *testing.T) {
+	t.Parallel()
+
+	dir := filepath.Join(t.TempDir(), ".vibe")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	hooksPath := filepath.Join(dir, "hooks.toml")
+	original := "note = '''\n# BEGIN vibe-pushover hook: post_agent_turn\nnot a managed block\n# END vibe-pushover hook: post_agent_turn\n'''\n"
+	if err := os.WriteFile(hooksPath, []byte(original), 0o600); err != nil {
+		t.Fatalf("WriteFile(hooks) error = %v", err)
+	}
+	if _, err := hooks.Install("mistral", hooksPath, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	data, err := os.ReadFile(hooksPath)
+	if err != nil {
+		t.Fatalf("ReadFile(hooks) error = %v", err)
+	}
+	var root map[string]any
+	if err := toml.Unmarshal(data, &root); err != nil {
+		t.Fatalf("Unmarshal(hooks) error = %v\n%s", err, data)
+	}
+	if root["note"] != "# BEGIN vibe-pushover hook: post_agent_turn\nnot a managed block\n# END vibe-pushover hook: post_agent_turn\n" {
+		t.Fatalf("multiline string changed: %#v", root["note"])
+	}
+	hookEntries, _ := root["hooks"].([]any)
+	if len(hookEntries) != 1 {
+		t.Fatalf("installed hooks = %#v, want one managed hook\n%s", root["hooks"], data)
+	}
+}
+
 func TestDefaultPathKimiUsesKimiCodeConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -358,6 +589,21 @@ func TestDefaultPathKimiHonorsKimiCodeHome(t *testing.T) {
 		t.Fatalf("DefaultPath() error = %v", err)
 	}
 	want := filepath.Join(home, "custom-kimi", "config.toml")
+	if got != want {
+		t.Fatalf("DefaultPath() = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultPathMistralHonorsVibeHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("VIBE_HOME", "~/custom-vibe")
+
+	got, err := hooks.DefaultPath("mistral")
+	if err != nil {
+		t.Fatalf("DefaultPath() error = %v", err)
+	}
+	want := filepath.Join(home, "custom-vibe", "hooks.toml")
 	if got != want {
 		t.Fatalf("DefaultPath() = %q, want %q", got, want)
 	}

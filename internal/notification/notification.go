@@ -3,6 +3,7 @@ package notification
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
@@ -19,6 +20,8 @@ const (
 type Message struct {
 	Title    string
 	Body     string
+	URL      string
+	URLTitle string
 	Priority int
 	Sound    string
 	TTL      int
@@ -63,40 +66,70 @@ func Build(agent string, event Event, payload map[string]any) (Message, error) {
 		if detail := completionDetail(agent, payload); detail != "" {
 			body = detail
 		}
-		return Message{
+		return withSupplementaryAction(Message{
 			Title:    truncate(fmt.Sprintf("✓ %s finished%s", displayName(agent), titleProjectSuffix(project)), 250),
 			Body:     truncate(body, 180),
 			Priority: -1,
 			Sound:    "none",
 			TTL:      3600,
-		}, nil
+		}, event, payload), nil
 	case EventApprovalRequired:
 		body := "Approval requested."
 		if detail := approvalDetail(agent, payload); detail != "" {
 			body = detail
 		}
-		return Message{
+		return withSupplementaryAction(Message{
 			Title:    truncate(fmt.Sprintf("⚠ %s needs approval%s", displayName(agent), titleProjectSuffix(project)), 250),
 			Body:     truncate(body, 300),
 			Priority: 1,
 			Sound:    "persistent",
 			TTL:      1800,
-		}, nil
+		}, event, payload), nil
 	case EventAttentionRequired:
 		body := "Agent needs your attention."
 		if detail := firstLine(firstString(payload, "message", "reason", "title")); detail != "" {
 			body = detail
 		}
-		return Message{
+		return withSupplementaryAction(Message{
 			Title:    truncate(fmt.Sprintf("⚠ %s needs attention%s", displayName(agent), titleProjectSuffix(project)), 250),
 			Body:     truncate(body, 300),
 			Priority: 1,
 			Sound:    "persistent",
 			TTL:      1800,
-		}, nil
+		}, event, payload), nil
 	default:
 		return Message{}, errors.New("event must be turn-complete, approval-required, or attention-required")
 	}
+}
+
+func withSupplementaryAction(message Message, event Event, payload map[string]any) Message {
+	rawURL := supplementaryURL(payload)
+	if rawURL == "" {
+		return message
+	}
+	message.URL = rawURL
+	message.URLTitle = firstString(payload, "url_title", "urlTitle")
+	if message.URLTitle == "" {
+		if event == EventTurnComplete {
+			message.URLTitle = "Open result"
+		} else {
+			message.URLTitle = "Open agent"
+		}
+	}
+	message.URLTitle = truncate(message.URLTitle, 100)
+	return message
+}
+
+func supplementaryURL(payload map[string]any) string {
+	for _, key := range []string{"url", "session_url", "sessionUrl", "web_url", "webUrl", "details_url", "detailsUrl"} {
+		rawURL, _ := payload[key].(string)
+		rawURL = strings.TrimSpace(rawURL)
+		parsed, err := url.Parse(rawURL)
+		if err == nil && utf8.RuneCountInString(rawURL) <= 512 && parsed.Host != "" && (parsed.Scheme == "https" || parsed.Scheme == "http") {
+			return rawURL
+		}
+	}
+	return ""
 }
 
 func completionDetail(agent string, payload map[string]any) string {
@@ -185,6 +218,7 @@ func firstLine(value string) string {
 func displayName(value string) string {
 	if name, ok := map[string]string{
 		"cortex":   "Cortex Code",
+		"mistral":  "Mistral Vibe",
 		"omp":      "Oh My Pi",
 		"opencode": "OpenCode",
 		"qwen":     "Qwen Code",

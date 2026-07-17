@@ -140,6 +140,9 @@ func previewCommand(options Options) *cli.Command {
 				"Title: %s\nBody: %s\nPriority: %d\nSound: %s\nTTL: %s\n",
 				message.Title, message.Body, message.Priority, message.Sound, time.Duration(message.TTL)*time.Second,
 			)
+			if err == nil && message.URL != "" {
+				_, err = fmt.Fprintf(options.Stdout, "Action: %s (%s)\n", message.URLTitle, message.URL)
+			}
 			return err
 		},
 	}
@@ -253,6 +256,7 @@ func notifyCommand(options Options) *cli.Command {
 			&cli.BoolFlag{Name: "skip-non-completion", Hidden: true},
 			&cli.BoolFlag{Name: "skip-active-qwen-stop", Hidden: true},
 			&cli.BoolFlag{Name: "skip-noninteractive-approval", Hidden: true},
+			&cli.BoolFlag{Name: "skip-mistral-subagent", Hidden: true},
 			configFlag(),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -280,6 +284,16 @@ func notifyCommand(options Options) *cli.Command {
 				extra, _ := payload["extra"].(map[string]any)
 				surface, _ := extra["surface"].(string)
 				if surface == "smart" {
+					return nil
+				}
+			}
+			if cmd.Bool("skip-mistral-subagent") {
+				parentSessionID, _ := payload["parent_session_id"].(string)
+				if parentSessionID == "" {
+					parentSessionID, _ = payload["parentSessionId"].(string)
+				}
+				transcriptPath, _ := payload["transcript_path"].(string)
+				if strings.TrimSpace(parentSessionID) != "" && isMistralSubagentTranscript(transcriptPath) {
 					return nil
 				}
 			}
@@ -324,6 +338,11 @@ func notifyCommand(options Options) *cli.Command {
 	}
 }
 
+func isMistralSubagentTranscript(path string) bool {
+	parts := strings.FieldsFunc(path, func(r rune) bool { return r == '/' || r == '\\' })
+	return len(parts) >= 3 && parts[len(parts)-3] == "agents" && parts[len(parts)-1] == "messages.jsonl"
+}
+
 func testCommand(options Options) *cli.Command {
 	return &cli.Command{
 		Name:  "test",
@@ -365,6 +384,8 @@ func sendWithCredentials(ctx context.Context, options Options, credentials confi
 		UserKey:  credentials.UserKey,
 		Title:    message.Title,
 		Body:     message.Body,
+		URL:      message.URL,
+		URLTitle: message.URLTitle,
 		Priority: message.Priority,
 		Sound:    message.Sound,
 		TTL:      message.TTL,
@@ -400,7 +421,8 @@ func notificationDestination(credentials config.Credentials) string {
 func notificationFingerprint(agent string, event notification.Event, destination string, payload map[string]any, message notification.Message) string {
 	identity := map[string]any{
 		"agent": agent, "event": event, "destination": destination,
-		"title": message.Title, "body": message.Body, "priority": message.Priority, "sound": message.Sound, "ttl": message.TTL,
+		"title": message.Title, "body": message.Body, "url": message.URL, "url_title": message.URLTitle,
+		"priority": message.Priority, "sound": message.Sound, "ttl": message.TTL,
 	}
 	for _, key := range []string{"session_id", "sessionId", "turn_id", "turnId", "tool_call_id", "toolCallId", "approval_id", "approvalId"} {
 		if value := fingerprintScalar(payload[key]); value != "" {

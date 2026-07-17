@@ -35,6 +35,64 @@ func TestBuildTurnCompleteNotification(t *testing.T) {
 	}
 }
 
+func TestBuildAddsSupplementaryActionForHTTPSURL(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("mistral", notification.EventTurnComplete, map[string]any{
+		"cwd":         "/tmp/demo",
+		"session_url": "https://example.com/agent/sessions/42",
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.URL != "https://example.com/agent/sessions/42" || got.URLTitle != "Open result" {
+		t.Fatalf("supplementary action = %q (%q)", got.URL, got.URLTitle)
+	}
+}
+
+func TestBuildIgnoresUnsafeSupplementaryURL(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("codex", notification.EventApprovalRequired, map[string]any{
+		"url": "javascript:alert(document.domain)",
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.URL != "" || got.URLTitle != "" {
+		t.Fatalf("unsafe supplementary action = %q (%q)", got.URL, got.URLTitle)
+	}
+}
+
+func TestBuildUsesSafeSupplementaryURLAfterUnsafeCandidate(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("codex", notification.EventTurnComplete, map[string]any{
+		"url":         "file:///tmp/local-result",
+		"session_url": "https://example.com/agent/sessions/42",
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.URL != "https://example.com/agent/sessions/42" || got.URLTitle != "Open result" {
+		t.Fatalf("supplementary action = %q (%q)", got.URL, got.URLTitle)
+	}
+}
+
+func TestBuildIgnoresOverlongSupplementaryURL(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("codex", notification.EventTurnComplete, map[string]any{
+		"url": "https://example.com/" + strings.Repeat("a", 500),
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.URL != "" || got.URLTitle != "" {
+		t.Fatalf("overlong supplementary action = %q (%q)", got.URL, got.URLTitle)
+	}
+}
+
 func TestBuildTurnCompleteNotificationTruncatesUnicodeSummary(t *testing.T) {
 	t.Parallel()
 
@@ -317,6 +375,7 @@ func TestBuildUsesProductNamesInNotificationTitles(t *testing.T) {
 
 	for agent, want := range map[string]string{
 		"cortex":   "✓ Cortex Code finished · demo",
+		"mistral":  "✓ Mistral Vibe finished · demo",
 		"omp":      "✓ Oh My Pi finished · demo",
 		"opencode": "✓ OpenCode finished · demo",
 		"qwen":     "✓ Qwen Code finished · demo",
