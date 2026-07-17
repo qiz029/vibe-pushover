@@ -35,7 +35,7 @@ var agentCatalog = []AgentInfo{
 	{Name: "droid", DisplayName: "Factory Droid", Capabilities: "completion+attention", Resource: "hooks"},
 	{Name: "dotcraft", DisplayName: "DotCraft", Capabilities: "completion+approval+stop-hook-attention", Resource: "hooks"},
 	{Name: "gajae", DisplayName: "Gajae Code", Capabilities: "completion only", Resource: "config"},
-	{Name: "gemini", DisplayName: "Gemini CLI", Capabilities: "completion only", Resource: "hooks"},
+	{Name: "gemini", DisplayName: "Gemini CLI", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "goose", DisplayName: "Goose", Capabilities: "completion only", Resource: "plugin"},
 	{Name: "grok", DisplayName: "Grok Build", Capabilities: "completion+attention", Resource: "hooks"},
 	{Name: "hermes", DisplayName: "Hermes Agent", Capabilities: "completion+approval", Resource: "hooks"},
@@ -624,7 +624,10 @@ func genericHookSpecs(agent string) []hookSpec {
 			{Name: "PermissionRequest", Event: "approval-required", Timeout: 10, Async: true},
 		}
 	case "gemini":
-		return []hookSpec{{Name: "AfterAgent", Event: "turn-complete", Timeout: 10000}}
+		return []hookSpec{
+			{Name: "AfterAgent", Event: "turn-complete", Timeout: 10000},
+			{Name: "Notification", Event: "approval-required", Matcher: "ToolPermission", Timeout: 10000},
+		}
 	case "droid":
 		return []hookSpec{
 			{Name: "Stop", Event: "turn-complete", Timeout: 10},

@@ -307,6 +307,20 @@ func approvalDetail(agent string, payload map[string]any) string {
 			return description
 		}
 	}
+	if agent == "gemini" {
+		details, _ := payload["details"].(map[string]any)
+		title := stringValue(details, "title")
+		command := stringValue(details, "command")
+		if title != "" && command != "" {
+			return title + "\n" + command
+		}
+		if command != "" {
+			return command
+		}
+		if title != "" {
+			return title
+		}
+	}
 	tool := firstString(payload, "tool_name", "toolName")
 	input, _ := payload["tool_input"].(map[string]any)
 	if input == nil {

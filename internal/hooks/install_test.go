@@ -1014,7 +1014,7 @@ func TestInstallAddsCodexHooks(t *testing.T) {
 	}
 }
 
-func TestInstallAddsGeminiTurnCompleteHook(t *testing.T) {
+func TestInstallAddsGeminiTurnCompleteAndToolPermissionHooks(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), ".gemini", "settings.json")
@@ -1044,11 +1044,18 @@ func TestInstallAddsGeminiTurnCompleteHook(t *testing.T) {
 	if len(got.Hooks["AfterAgent"]) != 1 {
 		t.Fatalf("AfterAgent hook count = %d, want 1", len(got.Hooks["AfterAgent"]))
 	}
+	if len(got.Hooks["Notification"]) != 1 {
+		t.Fatalf("Notification hook count = %d, want 1", len(got.Hooks["Notification"]))
+	}
+	if !bytes.Contains(data, []byte(`"matcher": "ToolPermission"`)) ||
+		!bytes.Contains(data, []byte(`--agent gemini --event approval-required --ignore-errors`)) {
+		t.Fatalf("Gemini ToolPermission hook is incomplete: %s", data)
+	}
 	if len(got.Hooks["BeforeTool"]) != 1 || !bytes.Contains(data, []byte(`"theme": "dark"`)) {
 		t.Fatalf("Gemini install did not preserve sibling config: %s", data)
 	}
-	if bytes.Contains(data, []byte("PermissionRequest")) {
-		t.Fatalf("Gemini config contains an unsupported permission hook: %s", data)
+	if bytes.Contains(data, []byte(`"PermissionRequest"`)) {
+		t.Fatalf("Gemini config contains an unsupported PermissionRequest event: %s", data)
 	}
 	if bytes.Contains(data, []byte(`"async"`)) {
 		t.Fatalf("Gemini config contains a Claude-specific async field: %s", data)

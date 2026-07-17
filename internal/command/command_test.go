@@ -1457,6 +1457,78 @@ func TestPreviewCommandExplainsMatchingSilenceRule(t *testing.T) {
 	}
 }
 
+func TestPreviewCommandExplainsActiveSnooze(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", SnoozedUntil: "2026-07-17T14:00:00Z",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	stdout := &bytes.Buffer{}
+	app := command.New(command.Options{
+		Stdin: bytes.NewBufferString(`{"cwd":"/tmp/demo"}`), Stdout: stdout, Stderr: &bytes.Buffer{},
+		Now: func() time.Time { return time.Date(2026, time.July, 17, 6, 0, 0, 0, time.FixedZone("PDT", -7*60*60)) },
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "preview", "--agent", "codex", "--event", "turn-complete", "--config", path,
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "Delivery: snoozed until 2026-07-17 07:00 PDT" {
+		t.Fatalf("preview output = %q", got)
+	}
+}
+
+func TestPreviewCommandExplainsActiveFocusForCompletion(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", FocusUntil: "2026-07-17T14:00:00Z",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	stdout := &bytes.Buffer{}
+	app := command.New(command.Options{
+		Stdin: bytes.NewBufferString(`{"cwd":"/tmp/demo"}`), Stdout: stdout, Stderr: &bytes.Buffer{},
+		Now: func() time.Time { return time.Date(2026, time.July, 17, 6, 0, 0, 0, time.FixedZone("PDT", -7*60*60)) },
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "preview", "--agent", "codex", "--event", "turn-complete", "--config", path,
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "Delivery: completion suppressed by focus mode until 2026-07-17 07:00 PDT" {
+		t.Fatalf("preview output = %q", got)
+	}
+}
+
+func TestPreviewCommandExplainsActiveQuietHoursForCompletion(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", QuietHoursStart: "22:00", QuietHoursEnd: "08:00",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	stdout := &bytes.Buffer{}
+	app := command.New(command.Options{
+		Stdin: bytes.NewBufferString(`{"cwd":"/tmp/demo"}`), Stdout: stdout, Stderr: &bytes.Buffer{},
+		Now: func() time.Time { return time.Date(2026, time.July, 17, 23, 0, 0, 0, time.Local) },
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "preview", "--agent", "codex", "--event", "turn-complete", "--config", path,
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "Delivery: completion suppressed by quiet hours (22:00-08:00)" {
+		t.Fatalf("preview output = %q", got)
+	}
+}
+
 func TestPreviewUsesProcessDirectoryWhenHookPayloadHasNoWorkspace(t *testing.T) {
 	t.Parallel()
 

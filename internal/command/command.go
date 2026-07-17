@@ -592,8 +592,23 @@ func previewCommand(options Options) *cli.Command {
 			} else if explicitConfig || !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
+			now := options.Now()
 			if configured && credentials.IsSilenced(cmd.String("agent"), string(event), notification.ProjectName(payload)) {
 				_, err = fmt.Fprintln(options.Stdout, "Delivery: suppressed by a matching silence rule")
+				return err
+			}
+			if configured && credentials.IsSnoozed(now) {
+				until, _ := time.Parse(time.RFC3339Nano, credentials.SnoozedUntil)
+				_, err = fmt.Fprintf(options.Stdout, "Delivery: snoozed until %s\n", formatDeadline(until, now.Location()))
+				return err
+			}
+			if configured && event == notification.EventTurnComplete && credentials.IsFocused(now) {
+				until, _ := time.Parse(time.RFC3339Nano, credentials.FocusUntil)
+				_, err = fmt.Fprintf(options.Stdout, "Delivery: completion suppressed by focus mode until %s\n", formatDeadline(until, now.Location()))
+				return err
+			}
+			if configured && event == notification.EventTurnComplete && credentials.IsQuietHours(now) {
+				_, err = fmt.Fprintf(options.Stdout, "Delivery: completion suppressed by quiet hours (%s-%s)\n", credentials.QuietHoursStart, credentials.QuietHoursEnd)
 				return err
 			}
 			if !notification.ShouldDeliver(event, profile) {

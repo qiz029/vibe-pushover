@@ -295,6 +295,30 @@ func TestBuildNonHermesApprovalIgnoresIncidentalExtra(t *testing.T) {
 	}
 }
 
+func TestBuildGeminiApprovalUsesToolPermissionDetails(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("gemini", notification.EventApprovalRequired, map[string]any{
+		"cwd":               "/tmp/vibe-pushover",
+		"notification_type": "ToolPermission",
+		"message":           "Confirm ShellTool execution",
+		"details": map[string]any{
+			"type":    "exec",
+			"title":   "ShellTool execution",
+			"command": "go test ./...",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Title != "⚠ Gemini needs approval · vibe-pushover" {
+		t.Fatalf("Title = %q", got.Title)
+	}
+	if got.Body != "ShellTool execution\ngo test ./..." {
+		t.Fatalf("Body = %q", got.Body)
+	}
+}
+
 func TestBuildApprovalNotification(t *testing.T) {
 	t.Parallel()
 
