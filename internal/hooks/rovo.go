@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -167,26 +168,41 @@ func upsertRovoCommand(commands *yaml.Node, event, want string) (bool, error) {
 }
 
 func isOwnedRovoCommand(command, event string) bool {
-	if isOwnedCommand(command, "rovo", event) {
-		return true
-	}
 	for _, quote := range []byte{'\'', '"'} {
 		separator := string(quote) + " notify --agent "
 		index := bytes.LastIndex([]byte(command), []byte(separator))
-		if index <= 0 {
+		if index <= 0 || !isCanonicalQuotedArgument(command[:index+1], quote) {
 			continue
 		}
 		tail := command[index+2:]
-		base := "notify --agent rovo --event " + event + " --ignore-errors --no-input"
-		if tail == base {
-			return true
-		}
-		config, ok := bytes.CutPrefix([]byte(tail), []byte(base+" --config "))
-		if ok && len(config) >= 2 && config[0] == quote && config[len(config)-1] == quote {
-			return true
+		for _, suffix := range []string{"", " --no-input"} {
+			base := "notify --agent rovo --event " + event + " --ignore-errors" + suffix
+			if tail == base {
+				return true
+			}
+			config, ok := strings.CutPrefix(tail, base+" --config ")
+			if ok && isCanonicalQuotedArgument(config, quote) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+func isCanonicalQuotedArgument(value string, quote byte) bool {
+	if len(value) < 2 || value[0] != quote || value[len(value)-1] != quote {
+		return false
+	}
+	inner := value[1 : len(value)-1]
+	if quote == '\'' {
+		decoded := strings.ReplaceAll(inner, `'"'"'`, "'")
+		return shellQuote(decoded) == value
+	}
+	if strings.Contains(inner, `"`) {
+		return false
+	}
+	quoted, err := windowsShellQuote(inner)
+	return err == nil && quoted == value
 }
 
 func writeRovoConfig(path string, document *yaml.Node) error {

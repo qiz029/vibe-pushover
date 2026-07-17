@@ -2474,6 +2474,46 @@ func TestInstallRovoDevHooksPreservesConfigSymlink(t *testing.T) {
 	}
 }
 
+func TestInstallRovoDevHooksPreservesThirdPartyCompoundCommand(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".rovodev", "config.yml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	compound := "prepare && '/opt/bin/vibe-pushover' notify --agent rovo --event turn-complete --ignore-errors --no-input"
+	original := "eventHooks:\n  events:\n    - name: on_complete\n      commands:\n        - command: \"" + compound + "\"\n"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := hooks.Install("rovo", path, "/new/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !bytes.Contains(data, []byte(compound)) {
+		t.Fatalf("third-party compound command was overwritten:\n%s", data)
+	}
+	if !bytes.Contains(data, []byte("'/new/bin/vibe-pushover' notify --agent rovo --event turn-complete")) {
+		t.Fatalf("managed Rovo Dev command was not appended:\n%s", data)
+	}
+}
+
+func TestInstallRovoDevHooksRecognizesQuotedExecutableWithApostrophe(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".rovodev", "config.yml")
+	executable := "/opt/Todd's tools/vibe-pushover"
+	if changed, err := hooks.Install("rovo", path, executable, ""); err != nil || !changed {
+		t.Fatalf("first Install() changed=%v error=%v", changed, err)
+	}
+	if changed, err := hooks.Install("rovo", path, executable, ""); err != nil || changed {
+		t.Fatalf("second Install() changed=%v error=%v", changed, err)
+	}
+}
+
 func TestInstallTabnineHooksIsIdempotent(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Tabnine documents POSIX executable hook scripts")
