@@ -31,6 +31,7 @@ type Message struct {
 	TTL       int
 	Retry     int
 	Expire    int
+	Monospace bool
 }
 
 func ShouldDeliver(event Event, profile string) bool {
@@ -72,6 +73,7 @@ func ApplyDetail(message Message, event Event, detail string) (Message, error) {
 	case "", "summary":
 		return message, nil
 	case "minimal", "private":
+		message.Monospace = false
 		switch event {
 		case EventTurnComplete:
 			message.Body = "Turn completed."
@@ -125,8 +127,10 @@ func Build(agent string, event Event, payload map[string]any) (Message, error) {
 		}, event, payload), nil
 	case EventApprovalRequired:
 		body := "Approval requested."
-		if detail := approvalDetail(agent, payload); detail != "" {
+		monospace := false
+		if detail, command := approvalDetail(agent, payload); detail != "" {
 			body = detail
+			monospace = command
 		}
 		return withSupplementaryAction(Message{
 			Title:     truncate(fmt.Sprintf("⚠ %s needs approval%s", displayName(agent), titleProjectSuffix(project)), 250),
@@ -135,6 +139,7 @@ func Build(agent string, event Event, payload map[string]any) (Message, error) {
 			Priority:  1,
 			Sound:     "persistent",
 			TTL:       1800,
+			Monospace: monospace,
 		}, event, payload), nil
 	case EventAttentionRequired:
 		body := "Agent needs your attention."
@@ -396,6 +401,7 @@ func displayName(value string) string {
 		"opendev":        "OpenDev",
 		"qwen":           "Qwen Code",
 		"rovo":           "Rovo Dev",
+		"swe-agent":      "SWE-agent",
 		"tabnine":        "Tabnine",
 		"trae":           "TRAE",
 		"vibe-pushover":  "vibe-pushover",
@@ -419,19 +425,19 @@ func titleProjectSuffix(project string) string {
 	return " · " + project
 }
 
-func approvalDetail(agent string, payload map[string]any) string {
+func approvalDetail(agent string, payload map[string]any) (string, bool) {
 	if agent == "hermes" {
 		extra, _ := payload["extra"].(map[string]any)
 		description := approvalLabel(firstString(extra, "description", "message", "reason"))
 		command := compactCommand(stringValue(extra, "command"))
 		if description != "" && command != "" {
-			return description + "\n" + command
+			return description + "\n" + command, true
 		}
 		if command != "" {
-			return command
+			return command, true
 		}
 		if description != "" {
-			return description
+			return description, false
 		}
 	}
 	if agent == "gemini" {
@@ -439,13 +445,13 @@ func approvalDetail(agent string, payload map[string]any) string {
 		title := approvalLabel(stringValue(details, "title"))
 		command := compactCommand(stringValue(details, "command"))
 		if title != "" && command != "" {
-			return title + "\n" + command
+			return title + "\n" + command, true
 		}
 		if command != "" {
-			return command
+			return command, true
 		}
 		if title != "" {
-			return title
+			return title, false
 		}
 	}
 	tool := approvalLabel(firstString(payload, "tool_name", "toolName"))
@@ -456,19 +462,19 @@ func approvalDetail(agent string, payload map[string]any) string {
 	if input != nil {
 		if command := compactCommand(stringValue(input, "command")); command != "" {
 			if tool != "" {
-				return tool + "\n" + command
+				return tool + "\n" + command, true
 			}
-			return command
+			return command, true
 		}
 	}
 	detail := firstLine(firstString(payload, "message", "reason"))
 	if tool != "" && detail != "" {
-		return tool + "\n" + detail
+		return tool + "\n" + detail, false
 	}
 	if tool != "" {
-		return tool
+		return tool, false
 	}
-	return detail
+	return detail, false
 }
 
 func compactCommand(value string) string {

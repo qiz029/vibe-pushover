@@ -1009,6 +1009,9 @@ func previewCommand(options Options) *cli.Command {
 				"Title: %s\nBody: %s\nPriority: %d\nSound: %s\nTTL: %s\n",
 				message.Title, message.Body, message.Priority, message.Sound, time.Duration(message.TTL)*time.Second,
 			)
+			if err == nil && message.Monospace {
+				_, err = fmt.Fprintln(options.Stdout, "Formatting: monospace")
+			}
 			if err == nil && message.Priority == 2 {
 				_, err = fmt.Fprintf(options.Stdout, "Retry: %s\nExpire: %s\n",
 					time.Duration(message.Retry)*time.Second, time.Duration(message.Expire)*time.Second)
@@ -1548,6 +1551,7 @@ func sendWithCredentials(ctx context.Context, options Options, credentials confi
 		TTL:           message.TTL,
 		Retry:         message.Retry,
 		Expire:        message.Expire,
+		Monospace:     message.Monospace,
 	})
 }
 
@@ -1583,6 +1587,7 @@ func notificationFingerprint(agent string, event notification.Event, destination
 		"title": message.Title, "body": message.Body, "url": message.URL, "url_title": message.URLTitle,
 		"timestamp": message.Timestamp, "priority": message.Priority, "sound": message.Sound, "ttl": message.TTL,
 		"retry": message.Retry, "expire": message.Expire,
+		"monospace": message.Monospace,
 	}
 	for _, key := range []string{"session_id", "sessionId", "turn_id", "turnId", "tool_call_id", "toolCallId", "approval_id", "approvalId"} {
 		if value := fingerprintScalar(payload[key]); value != "" {

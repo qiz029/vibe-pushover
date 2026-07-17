@@ -1053,6 +1053,7 @@ func TestNotifyCommandSendsHookPayload(t *testing.T) {
 			"message":   r.Form.Get("message"),
 			"priority":  r.Form.Get("priority"),
 			"sound":     r.Form.Get("sound"),
+			"monospace": r.Form.Get("monospace"),
 			"ttl":       r.Form.Get("ttl"),
 			"timestamp": r.Form.Get("timestamp"),
 			"url":       r.Form.Get("url"),
@@ -1093,6 +1094,9 @@ func TestNotifyCommandSendsHookPayload(t *testing.T) {
 	}
 	if got["sound"] != "persistent" {
 		t.Fatalf("sound = %q, want persistent", got["sound"])
+	}
+	if got["monospace"] != "1" {
+		t.Fatalf("monospace = %q, want approval command formatting", got["monospace"])
 	}
 	if got["ttl"] != "1800" {
 		t.Fatalf("ttl = %q, want 1800", got["ttl"])
@@ -1932,6 +1936,24 @@ func TestPreviewCommandShowsNotificationWithoutCredentials(t *testing.T) {
 	}
 }
 
+func TestPreviewCommandShowsMonospaceApprovalCommand(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin:  bytes.NewBufferString(`{"cwd":"/tmp/demo","tool_name":"Bash","tool_input":{"command":"make deploy"}}`),
+		Stdout: &stdout, Stderr: &bytes.Buffer{}, DefaultConfigPath: filepath.Join(t.TempDir(), "missing.json"),
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "preview", "--agent", "codex", "--event", "approval-required",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if output := stdout.String(); !strings.Contains(output, "Body: Bash\nmake deploy") || !strings.Contains(output, "Formatting: monospace") {
+		t.Fatalf("preview output does not explain command formatting:\n%s", output)
+	}
+}
+
 func TestPreviewCommandUsesDefaultConfigWhenAvailable(t *testing.T) {
 	t.Parallel()
 
@@ -2244,7 +2266,7 @@ func TestAgentsCommandShowsCapabilities(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"aider", "amp", "antigravity", "autohand", "auggie", "claude", "claude-router", "cline", "codebuddy", "coderabbit", "codewhale", "codex", "continue", "copilot", "craft", "crush", "cortex", "cursor", "droid", "gemini", "gitlab-duo", "goose", "grok", "gptme", "hermes", "junie", "kimi", "kiro", "mimo", "mini-swe-agent", "mistral", "omp", "openhands", "opencode", "opendev", "pi", "plandex", "qoder", "qwen", "rovo", "tabnine", "trae", "vscode", "windsurf", "workbuddy", "zcode",
+		"aider", "amp", "antigravity", "autohand", "auggie", "claude", "claude-router", "cline", "codebuddy", "coderabbit", "codewhale", "codex", "continue", "copilot", "craft", "crush", "cortex", "cursor", "droid", "gemini", "gitlab-duo", "goose", "grok", "gptme", "hermes", "junie", "kimi", "kiro", "mimo", "mini-swe-agent", "mistral", "omp", "openhands", "opencode", "opendev", "pi", "plandex", "qoder", "qwen", "rovo", "swe-agent", "tabnine", "trae", "vscode", "windsurf", "workbuddy", "zcode",
 		"completion+approval", "completion+approval+attention", "completion+attention", "completion only", "session exit+failure", "run wrapper",
 	} {
 		if !strings.Contains(output, want) {
@@ -4163,6 +4185,7 @@ func TestInstallCommandGuidesRunWrapperAgents(t *testing.T) {
 		"mini-swe-agent": "mini",
 		"opendev":        "opendev",
 		"plandex":        "plandex",
+		"swe-agent":      "sweagent",
 	} {
 		agent, executable := agent, executable
 		t.Run(agent, func(t *testing.T) {

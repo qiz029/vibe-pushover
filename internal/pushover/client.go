@@ -28,6 +28,7 @@ type Message struct {
 	TTL           int
 	Retry         int
 	Expire        int
+	Monospace     bool
 }
 
 type Client struct {
@@ -60,6 +61,9 @@ func (c *Client) Send(ctx context.Context, message Message) error {
 	}
 	if message.Sound != "" {
 		form.Set("sound", message.Sound)
+	}
+	if message.Monospace {
+		form.Set("monospace", "1")
 	}
 	if message.TTL > 0 && message.Priority != 2 {
 		form.Set("ttl", strconv.Itoa(message.TTL))

@@ -43,6 +43,7 @@ var runDetectionExecutables = map[string][]string{
 	"mini-swe-agent": {"mini"},
 	"opendev":        {"opendev"},
 	"plandex":        {"plandex", "pdx"},
+	"swe-agent":      {"sweagent"},
 }
 
 // DetectedRunAgents returns process-wrapper agents with a known CLI on PATH.

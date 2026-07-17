@@ -403,6 +403,9 @@ func TestBuildApprovalNotification(t *testing.T) {
 	if got.TTL != 1800 {
 		t.Fatalf("TTL = %d, want 1800", got.TTL)
 	}
+	if !got.Monospace {
+		t.Fatal("approval command is not marked for monospace display")
+	}
 }
 
 func TestBuildApprovalNotificationAcceptsCamelCasePayload(t *testing.T) {
@@ -417,6 +420,20 @@ func TestBuildApprovalNotificationAcceptsCamelCasePayload(t *testing.T) {
 	}
 	if got.Body != "bash\ngit push origin main" {
 		t.Fatalf("Body = %q", got.Body)
+	}
+}
+
+func TestBuildProseOnlyApprovalUsesNormalFormatting(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("amp", notification.EventApprovalRequired, map[string]any{
+		"message": "Allow the agent to continue?",
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Body != "Allow the agent to continue?" || got.Monospace {
+		t.Fatalf("prose approval notification = %#v", got)
 	}
 }
 
@@ -520,7 +537,7 @@ func TestApplyDetailMinimalHidesHookPayloadContent(t *testing.T) {
 	}
 	for _, test := range tests {
 		message := notification.Message{
-			Title: "keep project context", Body: "sensitive hook detail", URL: "https://example.com/session", URLTitle: "Open agent",
+			Title: "keep project context", Body: "sensitive hook detail", URL: "https://example.com/session", URLTitle: "Open agent", Monospace: true,
 		}
 		got, err := notification.ApplyDetail(message, test.event, "minimal")
 		if err != nil {
@@ -531,6 +548,9 @@ func TestApplyDetailMinimalHidesHookPayloadContent(t *testing.T) {
 		}
 		if got.Title != message.Title || got.URL != message.URL || got.URLTitle != message.URLTitle {
 			t.Errorf("ApplyDetail(%q) changed notification context: %#v", test.event, got)
+		}
+		if got.Monospace {
+			t.Errorf("ApplyDetail(%q) kept monospace after replacing the body", test.event)
 		}
 	}
 }
@@ -671,6 +691,7 @@ func TestBuildUsesProductNamesInNotificationTitles(t *testing.T) {
 		"opencode":       "✓ OpenCode finished · demo",
 		"opendev":        "✓ OpenDev finished · demo",
 		"qwen":           "✓ Qwen Code finished · demo",
+		"swe-agent":      "✓ SWE-agent finished · demo",
 		"trae":           "✓ TRAE finished · demo",
 		"vscode":         "✓ VS Code finished · demo",
 	} {

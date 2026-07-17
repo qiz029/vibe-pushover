@@ -276,7 +276,7 @@ func TestDetectedAgentsFindsAdditionalOfficialCLICommands(t *testing.T) {
 
 func TestDetectedRunAgentsFindsWrapperCLIs(t *testing.T) {
 	binDir := t.TempDir()
-	for _, name := range []string{"coderabbit", "cn", "crush", "duo", "mini", "opendev", "pdx"} {
+	for _, name := range []string{"coderabbit", "cn", "crush", "duo", "mini", "opendev", "pdx", "sweagent"} {
 		path := filepath.Join(binDir, name)
 		if runtime.GOOS == "windows" {
 			path += ".exe"
@@ -295,7 +295,7 @@ func TestDetectedRunAgentsFindsWrapperCLIs(t *testing.T) {
 	for _, agent := range detected {
 		got = append(got, agent.Name)
 	}
-	want := []string{"coderabbit", "continue", "crush", "gitlab-duo", "mini-swe-agent", "opendev", "plandex"}
+	want := []string{"coderabbit", "continue", "crush", "gitlab-duo", "mini-swe-agent", "opendev", "plandex", "swe-agent"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("DetectedRunAgents() = %#v, want %#v", got, want)
 	}

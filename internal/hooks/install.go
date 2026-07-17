@@ -72,6 +72,7 @@ var runAgentCatalog = []AgentInfo{
 	{Name: "mini-swe-agent", DisplayName: "mini-SWE-agent", Capabilities: "session exit+failure", Resource: "run wrapper"},
 	{Name: "opendev", DisplayName: "OpenDev", Capabilities: "session exit+failure", Resource: "run wrapper"},
 	{Name: "plandex", DisplayName: "Plandex", Capabilities: "session exit+failure", Resource: "run wrapper"},
+	{Name: "swe-agent", DisplayName: "SWE-agent", Capabilities: "session exit+failure", Resource: "run wrapper"},
 }
 
 func Agents() []AgentInfo {
