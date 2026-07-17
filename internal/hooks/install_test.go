@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/pelletier/go-toml/v2"
@@ -91,6 +92,7 @@ func TestDefaultPathsForAdditionalAgents(t *testing.T) {
 		"omp":      filepath.Join(home, ".omp", "agent", "extensions", "vibe-pushover", "index.ts"),
 		"qoder":    filepath.Join(home, ".qoder", "settings.json"),
 		"qwen":     filepath.Join(home, ".qwen", "settings.json"),
+		"trae":     filepath.Join(home, ".trae", "hooks.json"),
 		"vscode":   filepath.Join(home, "copilot-home", "hooks", "vibe-pushover.json"),
 		"windsurf": filepath.Join(home, ".codeium", "windsurf", "hooks.json"),
 	}
@@ -891,6 +893,196 @@ func TestInstallAddsQwenCompletionApprovalAndIdleAttentionHooks(t *testing.T) {
 	if changed {
 		t.Fatal("second Install() changed Qwen hooks")
 	}
+}
+
+func TestInstallAddsTraeCompletionAndApprovalHooksWithoutReplacingExistingHooks(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".trae", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"version":1,"theme":"dark","hooks":{"Stop":[{"hooks":[{"type":"command","command":"/Users/todd/.vibe-island/bin/vibe-island-bridge --source trae"}]}],"Notification":[{"hooks":[{"type":"command","command":"/Users/todd/.vibe-island/bin/vibe-island-bridge --source trae"}]}]}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	changed, err := hooks.Install("trae", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var got struct {
+		Version int                         `json:"version"`
+		Theme   string                      `json:"theme"`
+		Hooks   map[string][]map[string]any `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if got.Version != 1 || got.Theme != "dark" {
+		t.Fatalf("TRAE sibling config changed: version=%d theme=%q", got.Version, got.Theme)
+	}
+	if len(got.Hooks["Stop"]) != 2 || len(got.Hooks["Notification"]) != 2 {
+		t.Fatalf("TRAE hooks = %#v, want existing and vibe-pushover entries", got.Hooks)
+	}
+	if got.Hooks["Notification"][1]["matcher"] != "permission_prompt" {
+		t.Fatalf("TRAE Notification matcher = %#v, want permission_prompt", got.Hooks["Notification"][1]["matcher"])
+	}
+	for _, want := range []string{
+		"vibe-island-bridge --source trae",
+		"--agent trae --event turn-complete --ignore-errors",
+		"--agent trae --event approval-required --ignore-errors",
+		"--config '/tmp/pushover.json'",
+	} {
+		if !bytes.Contains(data, []byte(want)) {
+			t.Fatalf("TRAE config does not contain %q:\n%s", want, data)
+		}
+	}
+	changed, err = hooks.Install("trae", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed TRAE hooks")
+	}
+}
+
+func TestInstallCreatesVersionedTraeHookConfig(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".trae", "hooks.json")
+	if _, err := hooks.Install("trae", path, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var got struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if got.Version != 1 {
+		t.Fatalf("TRAE hook config version = %d, want 1", got.Version)
+	}
+}
+
+func TestInstallTraePreservesHookSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior is platform-specific")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "shared-trae-hooks.json")
+	path := filepath.Join(dir, ".trae", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(target, []byte(`{"version":1,"theme":"dark"}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+
+	if _, err := hooks.Install("trae", path, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("Lstat() error = %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("Install() replaced TRAE hook symlink")
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("ReadFile(target) error = %v", err)
+	}
+	if !bytes.Contains(data, []byte(`"Stop"`)) || !bytes.Contains(data, []byte(`"theme": "dark"`)) {
+		t.Fatalf("symlink target not updated or sibling config lost: %s", data)
+	}
+}
+
+func TestInstallTraeSeparatesManagedHookBeforeChangingSharedMatcher(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".trae", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	content := `{"version":1,"hooks":{"Notification":[{"matcher":"*","hooks":[{"type":"command","command":"third-party-notifier"},{"type":"command","command":"'/old/vibe-pushover' notify --agent trae --event approval-required --ignore-errors"}]}]}}`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := hooks.Install("trae", path, "/new/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var got struct {
+		Hooks map[string][]struct {
+			Matcher string `json:"matcher"`
+			Hooks   []struct {
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	groups := got.Hooks["Notification"]
+	if len(groups) != 2 {
+		t.Fatalf("Notification group count = %d, want 2: %s", len(groups), data)
+	}
+	if groups[0].Matcher != "*" || len(groups[0].Hooks) != 1 || groups[0].Hooks[0].Command != "third-party-notifier" {
+		t.Fatalf("third-party group changed = %#v", groups[0])
+	}
+	if groups[1].Matcher != "permission_prompt" || len(groups[1].Hooks) != 1 || !strings.Contains(groups[1].Hooks[0].Command, "/new/vibe-pushover") {
+		t.Fatalf("managed group = %#v, want isolated permission_prompt hook", groups[1])
+	}
+}
+
+func TestInstallTraeValidatesNumericManifestVersion(t *testing.T) {
+	t.Parallel()
+
+	t.Run("accepts numeric one", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "hooks.json")
+		if err := os.WriteFile(path, []byte(`{"version":1.0}`), 0o600); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
+		if _, err := hooks.Install("trae", path, "/opt/bin/vibe-pushover", ""); err != nil {
+			t.Fatalf("Install() rejected numeric version 1.0: %v", err)
+		}
+	})
+
+	t.Run("rejects string one", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "hooks.json")
+		original := []byte(`{"version":"1","theme":"dark"}`)
+		if err := os.WriteFile(path, original, 0o600); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
+		if _, err := hooks.Install("trae", path, "/opt/bin/vibe-pushover", ""); err == nil {
+			t.Fatal("Install() accepted string manifest version")
+		}
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile() error = %v", err)
+		}
+		if !bytes.Equal(got, original) {
+			t.Fatalf("invalid TRAE config changed: %s", got)
+		}
+	})
 }
 
 func TestInstallAddsQoderCompletionHook(t *testing.T) {

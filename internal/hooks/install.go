@@ -42,6 +42,7 @@ var agentCatalog = []AgentInfo{
 	{Name: "pi", DisplayName: "Pi", Capabilities: "completion only", Resource: "extension"},
 	{Name: "qoder", DisplayName: "Qoder", Capabilities: "completion only", Resource: "hooks"},
 	{Name: "qwen", DisplayName: "Qwen Code", Capabilities: "completion+approval+attention", Resource: "hooks"},
+	{Name: "trae", DisplayName: "TRAE", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "vscode", DisplayName: "VS Code Agent", Capabilities: "completion only", Resource: "hooks (preview)"},
 	{Name: "windsurf", DisplayName: "Windsurf", Capabilities: "completion only", Resource: "hooks"},
 }
@@ -211,6 +212,8 @@ func DefaultPath(agent string) (string, error) {
 		return filepath.Join(home, ".qoder", "settings.json"), nil
 	case "qwen":
 		return filepath.Join(home, ".qwen", "settings.json"), nil
+	case "trae":
+		return filepath.Join(home, ".trae", "hooks.json"), nil
 	case "vscode":
 		return filepath.Join(home, ".copilot", "hooks", "vibe-pushover.json"), nil
 	case "windsurf":
@@ -320,9 +323,13 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	if agent == "omp" {
 		return installOMPExtension(path, executable, pushoverConfig)
 	}
-	if agent == "grok" {
+	if agent == "grok" || agent == "trae" {
 		var err error
-		path, err = resolveJSONHookPath(path, "Grok Build")
+		displayName := "Grok Build"
+		if agent == "trae" {
+			displayName = "TRAE"
+		}
+		path, err = resolveJSONHookPath(path, displayName)
 		if err != nil {
 			return false, err
 		}
@@ -331,6 +338,17 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	root, err := readRoot(path)
 	if err != nil {
 		return false, err
+	}
+	changed := false
+	if agent == "trae" {
+		version, hasVersion := root["version"]
+		if hasVersion && !isJSONNumericOne(version) {
+			return false, fmt.Errorf("TRAE hook config version must be 1, got %v", version)
+		}
+		if !hasVersion {
+			root["version"] = 1
+			changed = true
+		}
 	}
 	hooksValue, ok := root["hooks"]
 	if !ok {
@@ -342,11 +360,14 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 		return false, errors.New("agent config field \"hooks\" must be an object")
 	}
 
-	changed := false
 	for _, spec := range genericHookSpecs(agent) {
 		command := ""
-		if agent == "grok" {
-			command, err = grokNotifyCommand(runtime.GOOS, executable, spec.Event, pushoverConfig)
+		if agent == "grok" || agent == "trae" {
+			displayName := "Grok Build"
+			if agent == "trae" {
+				displayName = "TRAE"
+			}
+			command, err = hookNotifyCommandForOS(runtime.GOOS, agent, displayName, executable, spec.Event, pushoverConfig)
 			if err != nil {
 				return false, err
 			}
@@ -381,6 +402,15 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func isJSONNumericOne(value any) bool {
+	number, ok := value.(json.Number)
+	if !ok {
+		return false
+	}
+	parsed, err := number.Float64()
+	return err == nil && parsed == 1
 }
 
 func resolveJSONHookPath(path, agent string) (string, error) {
@@ -444,6 +474,11 @@ func genericHookSpecs(agent string) []hookSpec {
 		return []hookSpec{
 			{Name: "Stop", Event: "turn-complete", Timeout: 10},
 			{Name: "StopFailure", Event: "attention-required", Timeout: 10},
+		}
+	case "trae":
+		return []hookSpec{
+			{Name: "Stop", Event: "turn-complete", Timeout: 10},
+			{Name: "Notification", Event: "approval-required", Matcher: "permission_prompt", Timeout: 10},
 		}
 	default:
 		return []hookSpec{
@@ -517,6 +552,14 @@ func upsert(value any, agent, event string, want hookGroup) ([]any, bool, error)
 			if hookMatches(command, wanted) && matcher == want.Matcher {
 				return entries, false, nil
 			}
+			if matcher != want.Matcher && len(commands) > 1 {
+				remaining := make([]any, 0, len(commands)-1)
+				remaining = append(remaining, commands[:commandIndex]...)
+				remaining = append(remaining, commands[commandIndex+1:]...)
+				group["hooks"] = remaining
+				entries[i] = group
+				return appendHookGroup(entries, want), true, nil
+			}
 			command["type"] = wanted.Type
 			command["command"] = wanted.Command
 			command["timeout"] = wanted.Timeout
@@ -536,10 +579,14 @@ func upsert(value any, agent, event string, want hookGroup) ([]any, bool, error)
 			return entries, true, nil
 		}
 	}
+	return appendHookGroup(entries, want), true, nil
+}
+
+func appendHookGroup(entries []any, want hookGroup) []any {
 	data, _ := json.Marshal(want)
 	var entry any
 	_ = json.Unmarshal(data, &entry)
-	return append(entries, entry), true, nil
+	return append(entries, entry)
 }
 
 func isOwnedCommand(command, agent, event string) bool {

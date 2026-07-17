@@ -226,14 +226,16 @@ func firstLine(value string) string {
 
 func displayName(value string) string {
 	if name, ok := map[string]string{
-		"cortex":   "Cortex Code",
-		"grok":     "Grok Build",
-		"mimo":     "MiMo Code",
-		"mistral":  "Mistral Vibe",
-		"omp":      "Oh My Pi",
-		"opencode": "OpenCode",
-		"qwen":     "Qwen Code",
-		"vscode":   "VS Code",
+		"cortex":        "Cortex Code",
+		"grok":          "Grok Build",
+		"mimo":          "MiMo Code",
+		"mistral":       "Mistral Vibe",
+		"omp":           "Oh My Pi",
+		"opencode":      "OpenCode",
+		"qwen":          "Qwen Code",
+		"trae":          "TRAE",
+		"vibe-pushover": "vibe-pushover",
+		"vscode":        "VS Code",
 	}[strings.ToLower(value)]; ok {
 		return name
 	}

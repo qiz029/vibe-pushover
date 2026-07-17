@@ -5,7 +5,7 @@
 - finishes a turn;
 - needs manual approval or otherwise needs your attention.
 
-The CLI currently integrates with 24 coding agents: Aider, Amp, Augment Auggie, Claude Code, Codex CLI, GitHub Copilot CLI, Snowflake Cortex Code, Cursor, Factory Droid, Gemini CLI, Goose, Grok Build, Hermes Agent, Kimi Code CLI, Kiro, MiMo Code, Mistral Vibe, Oh My Pi, OpenCode, Pi, Qoder, Qwen Code, VS Code Agent, and Windsurf. It is written in Go and uses [`urfave/cli`](https://github.com/urfave/cli).
+The CLI currently integrates with 25 coding agents: Aider, Amp, Augment Auggie, Claude Code, Codex CLI, GitHub Copilot CLI, Snowflake Cortex Code, Cursor, Factory Droid, Gemini CLI, Goose, Grok Build, Hermes Agent, Kimi Code CLI, Kiro, MiMo Code, Mistral Vibe, Oh My Pi, OpenCode, Pi, Qoder, Qwen Code, TRAE, VS Code Agent, and Windsurf. It is written in Go and uses [`urfave/cli`](https://github.com/urfave/cli).
 
 ## Install
 
@@ -60,7 +60,10 @@ Send a real test notification:
 
 ```sh
 vibe-pushover test
+vibe-pushover test --event turn-complete --message "Completion style looks good."
 ```
+
+The default test simulates an approval request so its high-priority sound, expiry, configured device target, and Pushover application icon can be checked end to end. Use `--event turn-complete` or `--event attention-required` to exercise the other styles. Tests honor the configured profile, so an `urgent` completion test reports that delivery is suppressed instead of sending a misleading notification.
 
 The notification profile can be viewed or changed later without re-entering the Pushover credentials:
 
@@ -90,6 +93,7 @@ vibe-pushover install --agent mimo
 vibe-pushover install --agent mistral
 vibe-pushover install --agent omp
 vibe-pushover install --agent opencode
+vibe-pushover install --agent trae
 ```
 
 | Agent | Notifications | Default integration path |
@@ -116,10 +120,11 @@ vibe-pushover install --agent opencode
 | Pi | completion | `$PI_CODING_AGENT_DIR/extensions/vibe-pushover/index.ts` or `~/.pi/agent/extensions/vibe-pushover/index.ts` |
 | Qoder | completion | `~/.qoder/settings.json` |
 | Qwen Code | completion, approval, idle attention | `~/.qwen/settings.json` |
+| TRAE | completion, approval | `~/.trae/hooks.json` |
 | VS Code Agent | completion | `$COPILOT_HOME/hooks/vibe-pushover.json` or `~/.copilot/hooks/vibe-pushover.json` (preview hook API) |
 | Windsurf | completion | `~/.codeium/windsurf/hooks.json` |
 
-The integrations follow each agent's native hook, plugin, or notification-command mechanism. They preserve existing settings, only replace entries owned by `vibe-pushover`, and repeated installs are idempotent. Copilot's attention event is limited to permission and elicitation dialogs. Droid's attention event can also mean the agent has been idle and is waiting for input. Amp reports its `awaiting-approval` state separately from turn errors. Grok Build maps its top-level `Stop` event to completion and `StopFailure` to attention; its separate `SubagentStop` event is deliberately not installed, so child completions stay quiet. MiMo Code uses its native OpenCode-compatible `session.idle` and `permission.asked` plugin events, but installs into MiMo Code's own config tree and does not share the OpenCode plugin. Qwen sends separate approval notifications and idle-input attention notifications; re-entered active `Stop` hooks are filtered to avoid duplicate or premature completion messages. Qoder applies the same active-Stop filter. Hermes sends approval notifications only for human-facing CLI or gateway decisions and skips `approvals.mode=smart` automatic decisions. Oh My Pi ignores `agent_end` events that announce an automatic continuation and reports its native tool-approval event separately. When session logging is enabled, Mistral Vibe filters inherited subagent `post_agent_turn` events using their official `agents/<session>/messages.jsonl` layout; with logging disabled, its payload does not identify subagents, so fan-out can produce extra completion notifications. Aider, Auggie, Cursor, Gemini, Goose, Kiro, Mistral Vibe, Pi, Qoder, VS Code Agent, and Windsurf currently expose completion notifications only through the installed integration.
+The integrations follow each agent's native hook, plugin, or notification-command mechanism. They preserve existing settings, only replace entries owned by `vibe-pushover`, and repeated installs are idempotent. Copilot's attention event is limited to permission and elicitation dialogs. Droid's attention event can also mean the agent has been idle and is waiting for input. Amp reports its `awaiting-approval` state separately from turn errors. Grok Build maps its top-level `Stop` event to completion and `StopFailure` to attention; its separate `SubagentStop` event is deliberately not installed, so child completions stay quiet. MiMo Code uses its native OpenCode-compatible `session.idle` and `permission.asked` plugin events, but installs into MiMo Code's own config tree and does not share the OpenCode plugin. Qwen sends separate approval notifications and idle-input attention notifications; re-entered active `Stop` hooks are filtered to avoid duplicate or premature completion messages. TRAE maps its top-level `Stop` hook to completion and only its `Notification` events matched as `permission_prompt` to approval; installation preserves unrelated and third-party hooks in the same global manifest. Qoder applies the same active-Stop filter. Hermes sends approval notifications only for human-facing CLI or gateway decisions and skips `approvals.mode=smart` automatic decisions. Oh My Pi ignores `agent_end` events that announce an automatic continuation and reports its native tool-approval event separately. When session logging is enabled, Mistral Vibe filters inherited subagent `post_agent_turn` events using their official `agents/<session>/messages.jsonl` layout; with logging disabled, its payload does not identify subagents, so fan-out can produce extra completion notifications. Aider, Auggie, Cursor, Gemini, Goose, Kiro, Mistral Vibe, Pi, Qoder, VS Code Agent, and Windsurf currently expose completion notifications only through the installed integration.
 
 Because Aider supports only one `notifications-command`, installation refuses to replace an existing custom command. Remove or compose that command yourself before retrying if you want `vibe-pushover` to own the setting.
 

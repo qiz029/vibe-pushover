@@ -105,6 +105,129 @@ func TestSetupCommandStoresUrgentNotificationProfile(t *testing.T) {
 	}
 }
 
+func TestTestCommandSendsConfiguredApprovalExperience(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", Device: "iphone", NotificationProfile: "watch",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var sent map[string]string
+	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("ParseForm() error = %v", err)
+		}
+		sent = map[string]string{
+			"device": r.Form.Get("device"), "title": r.Form.Get("title"), "message": r.Form.Get("message"),
+			"priority": r.Form.Get("priority"), "sound": r.Form.Get("sound"), "ttl": r.Form.Get("ttl"),
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"status":1,"request":"request-id"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &bytes.Buffer{}, HTTPClient: httpClient,
+		Endpoint: "https://pushover.test/messages.json",
+	})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "test", "--config", path}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if sent["device"] != "iphone" || sent["priority"] != "1" || sent["sound"] != "persistent" || sent["ttl"] != "1800" {
+		t.Fatalf("sent form = %#v, want configured device and approval delivery style", sent)
+	}
+	if !strings.Contains(sent["title"], "vibe-pushover") || sent["message"] != "Test notification delivered successfully." {
+		t.Fatalf("sent title/body = %q / %q", sent["title"], sent["message"])
+	}
+	if !strings.Contains(stdout.String(), "approval-required") {
+		t.Fatalf("output = %q, want tested event", stdout.String())
+	}
+}
+
+func TestTestCommandExplainsUrgentCompletionSuppression(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", NotificationProfile: "urgent",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	called := false
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &bytes.Buffer{},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			called = true
+			return nil, errors.New("unexpected Pushover request")
+		})},
+		Endpoint: "https://pushover.test/messages.json",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "test", "--config", path, "--event", "turn-complete",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if called {
+		t.Fatal("test sent a completion notification suppressed by urgent profile")
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "Test turn-complete notification suppressed by urgent profile" {
+		t.Fatalf("output = %q", got)
+	}
+}
+
+func TestTestCommandSupportsCompletionAndAttentionStyles(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name, event, profile, wantPriority, wantSound, wantTTL string
+	}{
+		{name: "watch completion", event: "turn-complete", profile: "watch", wantPriority: "0", wantSound: "pushover", wantTTL: "3600"},
+		{name: "quiet attention", event: "attention-required", profile: "quiet", wantPriority: "0", wantSound: "none", wantTTL: "1800"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := config.Save(path, config.Credentials{
+				AppToken: "app-token", UserKey: "user-key", NotificationProfile: tt.profile,
+			}); err != nil {
+				t.Fatalf("Save() error = %v", err)
+			}
+			var priority, sound, ttl, body string
+			httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if err := r.ParseForm(); err != nil {
+					t.Fatalf("ParseForm() error = %v", err)
+				}
+				priority, sound, ttl, body = r.Form.Get("priority"), r.Form.Get("sound"), r.Form.Get("ttl"), r.Form.Get("message")
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"status":1,"request":"request-id"}`)),
+					Header:     make(http.Header),
+				}, nil
+			})}
+			app := command.New(command.Options{
+				Stdin: &bytes.Buffer{}, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, HTTPClient: httpClient,
+				Endpoint: "https://pushover.test/messages.json",
+			})
+			if err := app.Run(context.Background(), []string{
+				"vibe-pushover", "test", "--config", path, "--event", tt.event, "--message", "Custom test body.",
+			}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if priority != tt.wantPriority || sound != tt.wantSound || ttl != tt.wantTTL || body != "Custom test body." {
+				t.Fatalf("priority=%q sound=%q ttl=%q body=%q", priority, sound, ttl, body)
+			}
+		})
+	}
+}
+
 func TestSetupCommandStoresInteractiveTargetDevices(t *testing.T) {
 	t.Parallel()
 
@@ -977,7 +1100,7 @@ func TestAgentsCommandShowsCapabilities(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"aider", "amp", "auggie", "claude", "codex", "copilot", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "kimi", "kiro", "mimo", "mistral", "omp", "opencode", "pi", "qoder", "qwen", "vscode", "windsurf",
+		"aider", "amp", "auggie", "claude", "codex", "copilot", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "kimi", "kiro", "mimo", "mistral", "omp", "opencode", "pi", "qoder", "qwen", "trae", "vscode", "windsurf",
 		"completion+approval", "completion+approval+attention", "completion+attention", "completion only",
 	} {
 		if !strings.Contains(output, want) {

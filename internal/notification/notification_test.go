@@ -380,6 +380,7 @@ func TestBuildUsesProductNamesInNotificationTitles(t *testing.T) {
 		"omp":      "✓ Oh My Pi finished · demo",
 		"opencode": "✓ OpenCode finished · demo",
 		"qwen":     "✓ Qwen Code finished · demo",
+		"trae":     "✓ TRAE finished · demo",
 		"vscode":   "✓ VS Code finished · demo",
 	} {
 		got, err := notification.Build(agent, notification.EventTurnComplete, map[string]any{"cwd": "/tmp/demo"})

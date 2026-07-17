@@ -408,35 +408,44 @@ func isMistralSubagentTranscript(path string) bool {
 func testCommand(options Options) *cli.Command {
 	return &cli.Command{
 		Name:  "test",
-		Usage: "send a test notification",
+		Usage: "send a real notification using the configured delivery experience",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "message", Usage: "test message body", Value: "vibe-pushover is configured correctly"},
+			&cli.StringFlag{Name: "event", Usage: "turn-complete, approval-required, or attention-required", Value: "approval-required"},
+			&cli.StringFlag{Name: "message", Usage: "test message body", Value: "Test notification delivered successfully."},
 			configFlag(),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			message := notification.Message{
-				Title: "vibe-pushover test",
-				Body:  cmd.String("message"),
-			}
-			if err := send(ctx, options, cmd.String("config"), message); err != nil {
+			path, err := configPath(cmd.String("config"))
+			if err != nil {
 				return err
 			}
-			_, err := fmt.Fprintln(options.Stdout, "Test notification sent")
+			credentials, err := config.Load(path)
+			if err != nil {
+				return err
+			}
+			event := notification.Event(strings.ToLower(strings.TrimSpace(cmd.String("event"))))
+			cwd, _ := os.Getwd()
+			message, err := notification.Build("vibe-pushover", event, map[string]any{
+				"cwd": cwd, "message": cmd.String("message"),
+			})
+			if err != nil {
+				return err
+			}
+			if !notification.ShouldDeliver(event, credentials.NotificationProfile) {
+				_, err = fmt.Fprintf(options.Stdout, "Test %s notification suppressed by %s profile\n", event, credentials.NotificationProfile)
+				return err
+			}
+			message, err = notification.ApplyProfile(message, event, credentials.NotificationProfile)
+			if err != nil {
+				return err
+			}
+			if err := sendWithCredentials(ctx, options, credentials, message); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(options.Stdout, "Test %s notification sent\n", event)
 			return err
 		},
 	}
-}
-
-func send(ctx context.Context, options Options, path string, message notification.Message) error {
-	path, err := configPath(path)
-	if err != nil {
-		return err
-	}
-	credentials, err := config.Load(path)
-	if err != nil {
-		return err
-	}
-	return sendWithCredentials(ctx, options, credentials, message)
 }
 
 func sendWithCredentials(ctx context.Context, options Options, credentials config.Credentials, message notification.Message) error {
