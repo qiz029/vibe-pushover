@@ -2,7 +2,9 @@ package command
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,6 +38,7 @@ type Options struct {
 	DefaultConfigPath string
 	Now               func() time.Time
 	RunProcess        func(context.Context, []string, io.Reader, io.Writer, io.Writer) error
+	Random            io.Reader
 }
 
 func New(options Options) *cli.Command {
@@ -54,6 +57,7 @@ func New(options Options) *cli.Command {
 			statusCommand(options),
 			profileCommand(options),
 			detailCommand(options),
+			encryptionCommand(options),
 			snoozeCommand(options),
 			focusCommand(options),
 			quietHoursCommand(options),
@@ -217,7 +221,11 @@ func statusCommand(options Options) *cli.Command {
 			if device == "" {
 				device = "all"
 			}
-			if _, err := fmt.Fprintf(options.Stdout, "Profile: %s\nDetail: %s\nDevice target: %s\n", profile, detail, device); err != nil {
+			encryption := "off"
+			if credentials.EncryptionKey != "" {
+				encryption = "on"
+			}
+			if _, err := fmt.Fprintf(options.Stdout, "Profile: %s\nDetail: %s\nDevice target: %s\nEnd-to-end encryption: %s\n", profile, detail, device, encryption); err != nil {
 				return err
 			}
 			if credentials.IsSnoozed(now) {
@@ -726,6 +734,88 @@ func detailCommand(options Options) *cli.Command {
 			}
 			_, err = fmt.Fprintf(options.Stdout, "Notification detail set to %s\n", detail)
 			return err
+		},
+	}
+}
+
+func encryptionCommand(options Options) *cli.Command {
+	return &cli.Command{
+		Name:      "encryption",
+		Aliases:   []string{"e2ee"},
+		Usage:     "manage optional Pushover end-to-end encryption",
+		ArgsUsage: "[enable|set|rotate|disable]",
+		Flags:     []cli.Flag{configFlag()},
+		Action: func(_ context.Context, cmd *cli.Command) error {
+			if cmd.Args().Len() > 1 {
+				return errors.New("encryption accepts enable, set, rotate, or disable")
+			}
+			path, err := configPath(cmd.String("config"))
+			if err != nil {
+				return err
+			}
+			credentials, err := config.Load(path)
+			if err != nil {
+				return err
+			}
+			action := strings.ToLower(strings.TrimSpace(cmd.Args().First()))
+			switch action {
+			case "":
+				state := "off"
+				if credentials.EncryptionKey != "" {
+					state = "on"
+				}
+				_, err = fmt.Fprintf(options.Stdout, "End-to-end encryption: %s\n", state)
+				return err
+			case "disable", "off":
+				credentials.EncryptionKey = ""
+				if err := config.Save(path, credentials); err != nil {
+					return err
+				}
+				_, err = fmt.Fprintln(options.Stdout, "End-to-end encryption disabled; future notifications use HTTPS transport encryption only")
+				return err
+			case "set":
+				prompter := newSecretPrompter(options.Stdin, options.Stdout)
+				key, err := prompter.readRequired("64-character Pushover encryption key: ")
+				if err != nil {
+					return err
+				}
+				credentials.EncryptionKey = strings.ToLower(key)
+				if err := config.Save(path, credentials); err != nil {
+					return err
+				}
+				_, err = fmt.Fprintln(options.Stdout, "End-to-end encryption enabled with the supplied key; configure the same key on every target iOS/Android device")
+				return err
+			case "enable":
+				if credentials.EncryptionKey != "" {
+					_, err = fmt.Fprintln(options.Stdout, "End-to-end encryption is already enabled; use rotate to generate a new key")
+					return err
+				}
+			case "rotate":
+			default:
+				return errors.New("encryption accepts enable, set, rotate, or disable")
+			}
+
+			key := make([]byte, 32)
+			if _, err := io.ReadFull(options.Random, key); err != nil {
+				return fmt.Errorf("generate Pushover encryption key: %w", err)
+			}
+			previousCredentials := credentials
+			credentials.EncryptionKey = hex.EncodeToString(key)
+			if err := config.Save(path, credentials); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(options.Stdout,
+				"End-to-end encryption enabled.\nEncryption key (shown once): %s\nConfigure this key in Pushover v5 on every target iOS/Android device, then run `vibe-pushover test`.\n",
+				credentials.EncryptionKey,
+			)
+			if err == nil {
+				return nil
+			}
+			writeErr := fmt.Errorf("display Pushover encryption key: %w", err)
+			if rollbackErr := config.Save(path, previousCredentials); rollbackErr != nil {
+				return errors.Join(writeErr, fmt.Errorf("roll back Pushover encryption key: %w", rollbackErr))
+			}
+			return writeErr
 		},
 	}
 }
@@ -1440,19 +1530,20 @@ func applyConfiguredSound(message notification.Message, event notification.Event
 func sendWithCredentials(ctx context.Context, options Options, credentials config.Credentials, message notification.Message) error {
 	client := pushover.NewClient(options.HTTPClient, options.Endpoint)
 	return client.Send(ctx, pushover.Message{
-		AppToken:  credentials.AppToken,
-		UserKey:   credentials.UserKey,
-		Device:    credentials.Device,
-		Title:     message.Title,
-		Body:      message.Body,
-		URL:       message.URL,
-		URLTitle:  message.URLTitle,
-		Timestamp: message.Timestamp,
-		Priority:  message.Priority,
-		Sound:     message.Sound,
-		TTL:       message.TTL,
-		Retry:     message.Retry,
-		Expire:    message.Expire,
+		AppToken:      credentials.AppToken,
+		UserKey:       credentials.UserKey,
+		EncryptionKey: credentials.EncryptionKey,
+		Device:        credentials.Device,
+		Title:         message.Title,
+		Body:          message.Body,
+		URL:           message.URL,
+		URLTitle:      message.URLTitle,
+		Timestamp:     message.Timestamp,
+		Priority:      message.Priority,
+		Sound:         message.Sound,
+		TTL:           message.TTL,
+		Retry:         message.Retry,
+		Expire:        message.Expire,
 	})
 }
 
@@ -1478,7 +1569,7 @@ func reserveNotification(store dedupe.Store, fingerprint string) (dedupe.Reserva
 }
 
 func notificationDestination(credentials config.Credentials) string {
-	data := credentials.AppToken + "\x00" + credentials.UserKey + "\x00" + credentials.Device
+	data := credentials.AppToken + "\x00" + credentials.UserKey + "\x00" + credentials.Device + "\x00" + credentials.EncryptionKey
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(data)))
 }
 
@@ -1595,6 +1686,9 @@ func withDefaults(options Options) Options {
 	}
 	if options.Now == nil {
 		options.Now = time.Now
+	}
+	if options.Random == nil {
+		options.Random = cryptorand.Reader
 	}
 	if options.RunProcess == nil {
 		options.RunProcess = func(ctx context.Context, argv []string, stdin io.Reader, stdout, stderr io.Writer) error {

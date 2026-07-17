@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 type Credentials struct {
 	AppToken            string        `json:"app_token"`
 	UserKey             string        `json:"user_key"`
+	EncryptionKey       string        `json:"encryption_key,omitempty"`
 	Device              string        `json:"device,omitempty"`
 	NotificationProfile string        `json:"notification_profile,omitempty"`
 	NotificationDetail  string        `json:"notification_detail,omitempty"`
@@ -100,6 +102,12 @@ func (c Credentials) Validate() error {
 	}
 	if c.UserKey == "" {
 		return errors.New("user key is required")
+	}
+	if c.EncryptionKey != "" {
+		decoded, err := hex.DecodeString(c.EncryptionKey)
+		if err != nil || len(decoded) != 32 {
+			return errors.New("encryption_key must be a 64-character hex string")
+		}
 	}
 	if c.Device != "" {
 		for _, device := range strings.Split(c.Device, ",") {

@@ -18,8 +18,8 @@ curl -fsSL https://github.com/qiz029/vibe-pushover/releases/latest/download/inst
 By default the installer writes to `~/.local/bin`. Override it with `VIBE_PUSHOVER_INSTALL_DIR`, or pin a release with `VIBE_PUSHOVER_VERSION`:
 
 ```sh
-curl -fsSL https://github.com/qiz029/vibe-pushover/releases/download/v0.22.0/install.sh | \
-  VIBE_PUSHOVER_VERSION=v0.22.0 VIBE_PUSHOVER_INSTALL_DIR="$HOME/bin" sh
+curl -fsSL https://github.com/qiz029/vibe-pushover/releases/download/v0.23.0/install.sh | \
+  VIBE_PUSHOVER_VERSION=v0.23.0 VIBE_PUSHOVER_INSTALL_DIR="$HOME/bin" sh
 ```
 
 `VIBE_PUSHOVER_DOWNLOAD_BASE_URL` can point the installer at a trusted mirror; when set, `VIBE_PUSHOVER_VERSION` is also required.
@@ -55,7 +55,7 @@ Saved Pushover credentials to ...
 
 Both credential values are hidden when setup runs in a terminal. `configure` remains available as an alias for `setup`.
 
-The default follows Go's user config directory: `~/Library/Application Support/vibe-pushover/config.json` on macOS, and `$XDG_CONFIG_HOME/vibe-pushover/config.json` (usually `~/.config/vibe-pushover/config.json`) on Linux. The containing directory and config file are created with `0700` and `0600` permissions. Use `--config PATH` on `setup`, `status`, `profile`, `detail`, `device`, `sound`, `snooze`, `focus`, `quiet-hours`, `silence`, `install`, `run`, `preview`, `test`, or `notify` to override it.
+The default follows Go's user config directory: `~/Library/Application Support/vibe-pushover/config.json` on macOS, and `$XDG_CONFIG_HOME/vibe-pushover/config.json` (usually `~/.config/vibe-pushover/config.json`) on Linux. The containing directory and config file are created with `0700` and `0600` permissions. Use `--config PATH` on `setup`, `status`, `profile`, `detail`, `encryption`, `device`, `sound`, `snooze`, `focus`, `quiet-hours`, `silence`, `install`, `run`, `preview`, `test`, or `notify` to override it.
 
 Inspect every delivery control in one credential-safe summary:
 
@@ -63,7 +63,16 @@ Inspect every delivery control in one credential-safe summary:
 vibe-pushover status
 ```
 
-`status` shows the profile, message-detail mode, target devices, current snooze and focus deadlines, quiet-hours schedule and whether it is active now, silence-rule count, and effective event sounds. For `on-call`, it also makes the emergency retry interval and maximum alert window explicit. It never prints the Pushover application token or user/group key.
+`status` shows the profile, message-detail mode, target devices, whether end-to-end encryption is enabled, current snooze and focus deadlines, quiet-hours schedule and whether it is active now, silence-rule count, and effective event sounds. For `on-call`, it also makes the emergency retry interval and maximum alert window explicit. It never prints the Pushover application token, user/group key, or encryption key.
+
+Optional Pushover v5 end-to-end encryption protects the notification title, body, and supplementary URL from the Pushover service. Generate a key locally, enter the displayed key in Pushover v5 on every target iOS/Android device, and send a test notification:
+
+```sh
+vibe-pushover encryption enable
+vibe-pushover test
+```
+
+The key is shown only by `enable` and `rotate`; `status` reports only `on` or `off`. Use `vibe-pushover encryption set` to enter an existing 64-character hexadecimal key through a hidden prompt, `vibe-pushover encryption rotate` to replace it, or `vibe-pushover encryption disable` to return to HTTPS transport encryption only. Rotation requires updating every target device before it can decrypt new messages. Pushover currently documents E2EE support for its v5 iOS and Android apps; when the account also has desktop or browser clients, target the configured mobile device with `vibe-pushover device NAME` before enabling encryption. Pushover still receives delivery metadata such as the application token, recipient, device, priority, sound, and timestamp. See Pushover's Message API [end-to-end encryption specification](https://pushover.net/api#end-to-end-encryption) and [security overview](https://support.pushover.net/i46-are-messages-notifications-encrypted).
 
 Send a real test notification:
 

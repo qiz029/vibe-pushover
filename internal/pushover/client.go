@@ -14,19 +14,20 @@ import (
 const DefaultEndpoint = "https://api.pushover.net/1/messages.json"
 
 type Message struct {
-	AppToken  string
-	UserKey   string
-	Device    string
-	Title     string
-	Body      string
-	URL       string
-	URLTitle  string
-	Timestamp int64
-	Priority  int
-	Sound     string
-	TTL       int
-	Retry     int
-	Expire    int
+	AppToken      string
+	UserKey       string
+	EncryptionKey string
+	Device        string
+	Title         string
+	Body          string
+	URL           string
+	URLTitle      string
+	Timestamp     int64
+	Priority      int
+	Sound         string
+	TTL           int
+	Retry         int
+	Expire        int
 }
 
 type Client struct {
@@ -74,6 +75,11 @@ func (c *Client) Send(ctx context.Context, message Message) error {
 		form.Set("url", message.URL)
 		if message.URLTitle != "" {
 			form.Set("url_title", message.URLTitle)
+		}
+	}
+	if message.EncryptionKey != "" {
+		if err := encryptMessageFields(form, message.EncryptionKey); err != nil {
+			return err
 		}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, strings.NewReader(form.Encode()))

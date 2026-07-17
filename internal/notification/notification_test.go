@@ -345,7 +345,7 @@ func TestBuildApprovalKeepsOmittedLineCountAfterTruncatingLongCommand(t *testing
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
-	if !strings.HasSuffix(got.Body, "… (+1 lines)") {
+	if !strings.HasSuffix(got.Body, "… (+1 line)") {
 		t.Fatalf("Body = %q, want preserved omitted-line count", got.Body)
 	}
 }

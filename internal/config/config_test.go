@@ -38,6 +38,37 @@ func TestSaveAndLoadCredentials(t *testing.T) {
 	}
 }
 
+func TestSaveAndLoadEndToEndEncryptionKey(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	want := config.Credentials{
+		AppToken: "app-token", UserKey: "user-key",
+		EncryptionKey: strings.Repeat("42", 32),
+	}
+	if err := config.Save(path, want); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Load() = %#v, want %#v", got, want)
+	}
+}
+
+func TestRejectsInvalidEndToEndEncryptionKey(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{"short", strings.Repeat("z", 64), strings.Repeat("42", 31)} {
+		err := (config.Credentials{AppToken: "app", UserKey: "user", EncryptionKey: key}).Validate()
+		if err == nil || !strings.Contains(err.Error(), "64-character hex") {
+			t.Fatalf("Validate(%q) error = %v, want encryption-key guidance", key, err)
+		}
+	}
+}
+
 func TestSaveAndLoadNotificationProfile(t *testing.T) {
 	t.Parallel()
 

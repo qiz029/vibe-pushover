@@ -482,7 +482,11 @@ func compactCommand(value string) string {
 		extraLines++
 	}
 	if extraLines > 0 {
-		suffix := fmt.Sprintf(" … (+%d lines)", extraLines)
+		label := "lines"
+		if extraLines == 1 {
+			label = "line"
+		}
+		suffix := fmt.Sprintf(" … (+%d %s)", extraLines, label)
 		available := maxCommandRunes - utf8.RuneCountInString(suffix)
 		runes := []rune(first)
 		if len(runes) > available {

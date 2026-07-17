@@ -738,6 +738,7 @@ func TestStatusCommandSummarizesDeliveryControlsWithoutSecrets(t *testing.T) {
 		"Profile: watch",
 		"Detail: minimal",
 		"Device target: iphone,ipad",
+		"End-to-end encryption: off",
 		"Snooze: active until 2026-07-18 00:00 PDT",
 		"Focus: active until 2026-07-18 01:00 PDT",
 		"Quiet hours: 22:00-08:00 (active now)",
@@ -765,12 +766,143 @@ func TestStatusCommandShowsDefaultActiveDeliveryState(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	for _, want := range []string{
-		"Profile: balanced", "Detail: summary", "Device target: all", "Snooze: off", "Focus: off", "Quiet hours: off", "Silence rules: 0",
+		"Profile: balanced", "Detail: summary", "Device target: all", "End-to-end encryption: off", "Snooze: off", "Focus: off", "Quiet hours: off", "Silence rules: 0",
 		"Sounds: turn-complete=none approval-required=persistent attention-required=persistent",
 	} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("status output does not contain %q:\n%s", want, stdout.String())
 		}
+	}
+}
+
+func TestEncryptionCommandGeneratesKeyAndStatusDoesNotLeakIt(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin:  &bytes.Buffer{},
+		Stdout: &stdout,
+		Stderr: &bytes.Buffer{},
+		Random: bytes.NewReader(bytes.Repeat([]byte{0x42}, 32)),
+	})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "encryption", "enable", "--config", path}); err != nil {
+		t.Fatalf("enable Run() error = %v", err)
+	}
+	key := strings.Repeat("42", 32)
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.EncryptionKey != key {
+		t.Fatalf("EncryptionKey = %q, want generated key", got.EncryptionKey)
+	}
+	if output := stdout.String(); !strings.Contains(output, key) || !strings.Contains(output, "shown once") || !strings.Contains(output, "every target iOS/Android device") {
+		t.Fatalf("enable output lacks one-time setup guidance:\n%s", output)
+	}
+
+	stdout.Reset()
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "status", "--config", path}); err != nil {
+		t.Fatalf("status Run() error = %v", err)
+	}
+	if output := stdout.String(); !strings.Contains(output, "End-to-end encryption: on") || strings.Contains(output, key) {
+		t.Fatalf("status output = %q, want enabled state without key", output)
+	}
+}
+
+func TestEncryptionCommandInteractivelySetsExistingKeyWithoutEcho(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	key := strings.Repeat("AB", 32)
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin: strings.NewReader(key + "\n"), Stdout: &stdout, Stderr: &bytes.Buffer{},
+	})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "encryption", "set", "--config", path}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.EncryptionKey != strings.ToLower(key) {
+		t.Fatalf("EncryptionKey = %q, want normalized supplied key", got.EncryptionKey)
+	}
+	if strings.Contains(stdout.String(), key) || strings.Contains(stdout.String(), strings.ToLower(key)) {
+		t.Fatalf("encryption set output leaked key: %q", stdout.String())
+	}
+}
+
+func TestEncryptionCommandRotatesAndDisablesKey(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", EncryptionKey: strings.Repeat("42", 32),
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &bytes.Buffer{},
+		Random: bytes.NewReader(bytes.Repeat([]byte{0x24}, 32)),
+	})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "encryption", "rotate", "--config", path}); err != nil {
+		t.Fatalf("rotate Run() error = %v", err)
+	}
+	rotated := strings.Repeat("24", 32)
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load(rotated) error = %v", err)
+	}
+	if got.EncryptionKey != rotated || !strings.Contains(stdout.String(), rotated) {
+		t.Fatalf("rotate result key=%q output=%q", got.EncryptionKey, stdout.String())
+	}
+
+	stdout.Reset()
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "encryption", "disable", "--config", path}); err != nil {
+		t.Fatalf("disable Run() error = %v", err)
+	}
+	got, err = config.Load(path)
+	if err != nil {
+		t.Fatalf("Load(disabled) error = %v", err)
+	}
+	if got.EncryptionKey != "" || !strings.Contains(stdout.String(), "disabled") {
+		t.Fatalf("disable result key=%q output=%q", got.EncryptionKey, stdout.String())
+	}
+}
+
+func TestEncryptionCommandRollsBackRotationWhenKeyCannotBeDisplayed(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	originalKey := strings.Repeat("42", 32)
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", EncryptionKey: originalKey,
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: errorWriter{}, Stderr: &bytes.Buffer{},
+		Random: bytes.NewReader(bytes.Repeat([]byte{0x24}, 32)),
+	})
+	err := app.Run(context.Background(), []string{"vibe-pushover", "encryption", "rotate", "--config", path})
+	if err == nil || !strings.Contains(err.Error(), "display Pushover encryption key") {
+		t.Fatalf("Run() error = %v, want display failure", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.EncryptionKey != originalKey {
+		t.Fatalf("EncryptionKey = %q, want original key after output failure", got.EncryptionKey)
 	}
 }
 
@@ -973,6 +1105,43 @@ func TestNotifyCommandSendsHookPayload(t *testing.T) {
 	}
 	if got["device"] != "iphone" {
 		t.Fatalf("device = %q, want iphone", got["device"])
+	}
+}
+
+func TestNotifyCommandUsesConfiguredEndToEndEncryption(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", EncryptionKey: strings.Repeat("42", 32),
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var encrypted, title, message string
+	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("ParseForm() error = %v", err)
+		}
+		encrypted, title, message = r.Form.Get("encrypted"), r.Form.Get("title"), r.Form.Get("message")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"status":1,"request":"request-id"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	app := command.New(command.Options{
+		Stdin:  bytes.NewBufferString(`{"cwd":"/tmp/demo","last_assistant_message":"Implemented E2EE."}`),
+		Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, HTTPClient: httpClient,
+		Endpoint: "https://pushover.test/messages.json", DedupePath: filepath.Join(dir, "dedupe.json"),
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--config", path, "--agent", "codex", "--event", "turn-complete",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if encrypted != "1" || title == "" || title == "✓ Codex finished · demo" || message == "" || message == "Implemented E2EE." {
+		t.Fatalf("encrypted=%q title=%q message=%q, want encrypted sensitive fields", encrypted, title, message)
 	}
 }
 
@@ -4029,6 +4198,8 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 type errorReader struct{}
 
+type errorWriter struct{}
+
 type testExitError struct {
 	code int
 }
@@ -4043,6 +4214,10 @@ func (e testExitError) ExitCode() int {
 
 func (errorReader) Read([]byte) (int, error) {
 	return 0, errors.New("stdin must not be read")
+}
+
+func (errorWriter) Write([]byte) (int, error) {
+	return 0, errors.New("stdout write failed")
 }
 
 func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {

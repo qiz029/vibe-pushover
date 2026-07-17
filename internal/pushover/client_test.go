@@ -1,7 +1,15 @@
 package pushover_test
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -57,6 +65,120 @@ func TestClientSendsMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send() error = %v", err)
 	}
+}
+
+func TestClientEndToEndEncryptsSensitiveFields(t *testing.T) {
+	t.Parallel()
+
+	keyHex := strings.Repeat("42", 32)
+	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("ParseForm() error = %v", err)
+		}
+		if got := r.Form.Get("encrypted"); got != "1" {
+			t.Fatalf("encrypted = %q, want 1", got)
+		}
+		want := map[string]string{
+			"title":     "Agent needs approval",
+			"message":   "Bash\nmake deploy",
+			"url":       "https://example.com/session/42",
+			"url_title": "Open agent",
+		}
+		for field, plaintext := range want {
+			ciphertext := r.Form.Get(field)
+			if ciphertext == "" || ciphertext == plaintext {
+				t.Fatalf("form[%q] = %q, want encrypted value", field, ciphertext)
+			}
+			if got := decryptPushoverField(t, keyHex, ciphertext); got != plaintext {
+				t.Fatalf("decrypt(form[%q]) = %q, want %q", field, got, plaintext)
+			}
+		}
+		return jsonResponse(http.StatusOK, map[string]any{"status": 1}), nil
+	})}
+
+	client := pushover.NewClient(httpClient, "https://pushover.test/messages.json")
+	err := client.Send(context.Background(), pushover.Message{
+		AppToken: "app-token", UserKey: "user-key", EncryptionKey: keyHex,
+		Title: "Agent needs approval", Body: "Bash\nmake deploy",
+		URL: "https://example.com/session/42", URLTitle: "Open agent",
+		Priority: 1, Sound: "persistent",
+	})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+}
+
+func TestClientRejectsInvalidEndToEndEncryptionKeyBeforeSending(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		called = true
+		return jsonResponse(http.StatusOK, map[string]any{"status": 1}), nil
+	})}
+	client := pushover.NewClient(httpClient, "https://pushover.test/messages.json")
+	err := client.Send(context.Background(), pushover.Message{
+		AppToken: "app-token", UserKey: "user-key", EncryptionKey: "invalid",
+		Title: "Agent finished", Body: "Done",
+	})
+	if err == nil || !strings.Contains(err.Error(), "64-character hex") {
+		t.Fatalf("Send() error = %v, want invalid encryption-key guidance", err)
+	}
+	if called {
+		t.Fatal("HTTP transport was called with an invalid encryption key")
+	}
+}
+
+func decryptPushoverField(t *testing.T, keyHex, encoded string) string {
+	t.Helper()
+	key, err := hex.DecodeString(keyHex)
+	if err != nil {
+		t.Fatalf("DecodeString(key) error = %v", err)
+	}
+	payload, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("DecodeString(payload) error = %v", err)
+	}
+	if len(payload) < aes.BlockSize+sha256.Size+aes.BlockSize {
+		t.Fatalf("encrypted payload length = %d, want IV+ciphertext+HMAC", len(payload))
+	}
+	iv := payload[:aes.BlockSize]
+	macOffset := len(payload) - sha256.Size
+	ciphertext := payload[aes.BlockSize:macOffset]
+	wantMAC := payload[macOffset:]
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write(payload[:macOffset])
+	if !hmac.Equal(mac.Sum(nil), wantMAC) {
+		t.Fatal("encrypted payload HMAC is invalid")
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatalf("NewCipher() error = %v", err)
+	}
+	compressed := append([]byte(nil), ciphertext...)
+	cipher.NewCBCDecrypter(block, iv).CryptBlocks(compressed, compressed)
+	padding := int(compressed[len(compressed)-1])
+	if padding < 1 || padding > aes.BlockSize || padding > len(compressed) {
+		t.Fatalf("PKCS7 padding = %d", padding)
+	}
+	for _, value := range compressed[len(compressed)-padding:] {
+		if int(value) != padding {
+			t.Fatal("PKCS7 padding bytes are invalid")
+		}
+	}
+	compressed = compressed[:len(compressed)-padding]
+	reader, err := gzip.NewReader(bytes.NewReader(compressed))
+	if err != nil {
+		t.Fatalf("gzip.NewReader() error = %v", err)
+	}
+	plaintext, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("ReadAll(gzip) error = %v", err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatalf("gzip.Close() error = %v", err)
+	}
+	return string(plaintext)
 }
 
 func TestClientReportsRejectedMessage(t *testing.T) {
