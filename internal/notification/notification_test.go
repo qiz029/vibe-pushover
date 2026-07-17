@@ -78,6 +78,25 @@ func TestBuildAttentionUsesTerminationReason(t *testing.T) {
 	}
 }
 
+func TestBuildJunieFailureAttentionUsesClassAndDetails(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("junie", notification.EventAttentionRequired, map[string]any{
+		"cwd":           "/tmp/demo",
+		"error":         "rate_limit",
+		"error_details": "429 Too Many Requests from the configured provider",
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Title != "⚠ Junie needs attention · demo" {
+		t.Fatalf("Title = %q", got.Title)
+	}
+	if got.Body != "rate_limit\n429 Too Many Requests from the configured provider" {
+		t.Fatalf("Body = %q", got.Body)
+	}
+}
+
 func TestBuildUsesSafeSupplementaryURLAfterUnsafeCandidate(t *testing.T) {
 	t.Parallel()
 

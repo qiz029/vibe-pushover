@@ -44,6 +44,7 @@ func DetectedAgents() ([]AgentInfo, error) {
 		"goose":       {filepath.Join(configHome, "goose"), filepath.Join(home, ".local", "share", "goose")},
 		"grok":        {filepath.Join(home, ".grok")},
 		"hermes":      {filepath.Join(home, ".hermes")},
+		"junie":       {filepath.Join(home, ".junie")},
 		"kimi":        {filepath.Join(home, ".kimi-code")},
 		"kiro":        {filepath.Join(home, ".kiro")},
 		"kilo":        {filepath.Join(configHome, "kilo")},

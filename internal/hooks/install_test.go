@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -78,6 +79,7 @@ func TestDetectedAgentsFindsEverySupportedConfigHome(t *testing.T) {
 		filepath.Join(".config", "goose"),
 		".grok",
 		".hermes",
+		".junie",
 		".kimi-code",
 		".kiro",
 		filepath.Join(".config", "kilo"),
@@ -274,6 +276,7 @@ func TestDefaultPathsForAdditionalAgents(t *testing.T) {
 		"gemini":      filepath.Join(home, "gemini-home", ".gemini", "settings.json"),
 		"goose":       filepath.Join(home, ".agents", "plugins", "vibe-pushover"),
 		"hermes":      filepath.Join(home, ".hermes", "config.yaml"),
+		"junie":       filepath.Join(home, ".junie", "config.json"),
 		"kiro":        filepath.Join(home, ".kiro", "hooks", "vibe-pushover.json"),
 		"kilo":        filepath.Join(home, ".xdg", "kilo", "plugin", "vibe-pushover.ts"),
 		"mimo":        filepath.Join(home, ".xdg", "mimocode", "plugins", "vibe-pushover.ts"),
@@ -1069,6 +1072,75 @@ func TestInstallAddsGeminiTurnCompleteAndToolPermissionHooks(t *testing.T) {
 	}
 	if changed {
 		t.Fatal("second Install() changed Gemini hooks")
+	}
+}
+
+func TestInstallAddsJunieLifecycleHooksWithoutControllingApproval(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".junie", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	original := `{"model":"sonnet","hooks":{"SessionStart":[{"matcher":"startup","hooks":[{"type":"command","command":"personal-login","timeout":30}]}]}}`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	changed, err := hooks.Install("junie", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var got struct {
+		Model string                      `json:"model"`
+		Hooks map[string][]map[string]any `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if got.Model != "sonnet" || len(got.Hooks["SessionStart"]) != 1 {
+		t.Fatalf("Junie install changed unrelated config: %s", data)
+	}
+	wants := map[string]string{
+		"Stop":              "turn-complete",
+		"StopFailure":       "attention-required",
+		"PermissionRequest": "approval-required",
+	}
+	for hookName, event := range wants {
+		groups := got.Hooks[hookName]
+		if len(groups) != 1 {
+			t.Fatalf("%s hook count = %d, want 1", hookName, len(groups))
+		}
+		commands, _ := groups[0]["hooks"].([]any)
+		command, _ := commands[0].(map[string]any)
+		if !strings.Contains(fmt.Sprint(command["command"]), "notify --agent junie --event "+event+" --ignore-errors") {
+			t.Fatalf("%s command = %#v", hookName, command)
+		}
+		if command["timeout"] != float64(10) {
+			t.Fatalf("%s timeout = %#v, want 10 seconds", hookName, command["timeout"])
+		}
+	}
+	if got.Hooks["Stop"][0]["hooks"].([]any)[0].(map[string]any)["async"] != true ||
+		got.Hooks["PermissionRequest"][0]["hooks"].([]any)[0].(map[string]any)["async"] != true {
+		t.Fatalf("Junie completion and approval hooks must be observational async hooks: %s", data)
+	}
+	if !bytes.Contains(data, []byte(`--skip-active-stop`)) {
+		t.Fatalf("Junie Stop hook does not filter re-entry: %s", data)
+	}
+
+	changed, err = hooks.Install("junie", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed Junie hooks")
 	}
 }
 

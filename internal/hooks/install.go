@@ -39,6 +39,7 @@ var agentCatalog = []AgentInfo{
 	{Name: "goose", DisplayName: "Goose", Capabilities: "completion only", Resource: "plugin"},
 	{Name: "grok", DisplayName: "Grok Build", Capabilities: "completion+attention", Resource: "hooks"},
 	{Name: "hermes", DisplayName: "Hermes Agent", Capabilities: "completion+approval", Resource: "hooks"},
+	{Name: "junie", DisplayName: "JetBrains Junie CLI", Capabilities: "completion+approval+attention", Resource: "hooks (EAP)"},
 	{Name: "kimi", DisplayName: "Kimi Code CLI", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "kiro", DisplayName: "Kiro", Capabilities: "completion only (macOS/Linux)", Resource: "hooks"},
 	{Name: "kilo", DisplayName: "Kilo Code", Capabilities: "completion+approval+attention", Resource: "plugin"},
@@ -261,6 +262,8 @@ func DefaultPath(agent string) (string, error) {
 		return filepath.Join(home, ".kimi-code", "config.toml"), nil
 	case "kiro":
 		return filepath.Join(home, ".kiro", "hooks", "vibe-pushover.json"), nil
+	case "junie":
+		return filepath.Join(home, ".junie", "config.json"), nil
 	case "kilo":
 		return kiloPluginPath(runtime.GOOS, home, os.Getenv)
 	case "mistral":
@@ -627,6 +630,12 @@ func genericHookSpecs(agent string) []hookSpec {
 		return []hookSpec{
 			{Name: "AfterAgent", Event: "turn-complete", Timeout: 10000},
 			{Name: "Notification", Event: "approval-required", Matcher: "ToolPermission", Timeout: 10000},
+		}
+	case "junie":
+		return []hookSpec{
+			{Name: "Stop", Event: "turn-complete", Timeout: 10, Async: true, Flag: "--skip-active-stop"},
+			{Name: "StopFailure", Event: "attention-required", Timeout: 10},
+			{Name: "PermissionRequest", Event: "approval-required", Timeout: 10, Async: true},
 		}
 	case "droid":
 		return []hookSpec{

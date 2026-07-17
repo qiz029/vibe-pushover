@@ -93,7 +93,7 @@ func Build(agent string, event Event, payload map[string]any) (Message, error) {
 		}, event, payload), nil
 	case EventAttentionRequired:
 		body := "Agent needs your attention."
-		if detail := firstLine(firstString(payload, "message", "reason", "error", "title", "terminationReason", "status")); detail != "" {
+		if detail := attentionDetail(agent, payload); detail != "" {
 			body = detail
 		}
 		return withSupplementaryAction(Message{
@@ -106,6 +106,20 @@ func Build(agent string, event Event, payload map[string]any) (Message, error) {
 	default:
 		return Message{}, errors.New("event must be turn-complete, approval-required, or attention-required")
 	}
+}
+
+func attentionDetail(agent string, payload map[string]any) string {
+	if agent == "junie" {
+		errorClass := firstLine(stringValue(payload, "error"))
+		details := firstLine(stringValue(payload, "error_details"))
+		if errorClass != "" && details != "" {
+			return errorClass + "\n" + details
+		}
+		if details != "" {
+			return details
+		}
+	}
+	return firstLine(firstString(payload, "message", "reason", "error", "title", "terminationReason", "status"))
 }
 
 func ProjectName(payload map[string]any) string {

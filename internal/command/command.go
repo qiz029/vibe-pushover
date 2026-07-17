@@ -47,6 +47,7 @@ func New(options Options) *cli.Command {
 		ErrWriter:             options.Stderr,
 		Commands: []*cli.Command{
 			setupCommand(options),
+			statusCommand(options),
 			profileCommand(options),
 			snoozeCommand(options),
 			focusCommand(options),
@@ -61,6 +62,97 @@ func New(options Options) *cli.Command {
 			testCommand(options),
 		},
 	}
+}
+
+func statusCommand(options Options) *cli.Command {
+	return &cli.Command{
+		Name:  "status",
+		Usage: "show the current notification delivery controls",
+		Flags: []cli.Flag{configFlag()},
+		Action: func(_ context.Context, cmd *cli.Command) error {
+			path, err := configPath(cmd.String("config"))
+			if err != nil {
+				return err
+			}
+			credentials, err := config.Load(path)
+			if err != nil {
+				return err
+			}
+			now := options.Now()
+			profile := credentials.NotificationProfile
+			if profile == "" {
+				profile = "balanced"
+			}
+			device := credentials.Device
+			if device == "" {
+				device = "all"
+			}
+			if _, err := fmt.Fprintf(options.Stdout, "Profile: %s\nDevice target: %s\n", profile, device); err != nil {
+				return err
+			}
+			if credentials.IsSnoozed(now) {
+				until, _ := time.Parse(time.RFC3339Nano, credentials.SnoozedUntil)
+				if _, err := fmt.Fprintf(options.Stdout, "Snooze: active until %s\n", formatDeadline(until, now.Location())); err != nil {
+					return err
+				}
+			} else if _, err := fmt.Fprintln(options.Stdout, "Snooze: off"); err != nil {
+				return err
+			}
+			if credentials.IsFocused(now) {
+				until, _ := time.Parse(time.RFC3339Nano, credentials.FocusUntil)
+				if _, err := fmt.Fprintf(options.Stdout, "Focus: active until %s\n", formatDeadline(until, now.Location())); err != nil {
+					return err
+				}
+			} else if _, err := fmt.Fprintln(options.Stdout, "Focus: off"); err != nil {
+				return err
+			}
+			if credentials.QuietHoursStart == "" {
+				if _, err := fmt.Fprintln(options.Stdout, "Quiet hours: off"); err != nil {
+					return err
+				}
+			} else {
+				state := "inactive now"
+				if credentials.IsQuietHours(now) {
+					state = "active now"
+				}
+				if _, err := fmt.Fprintf(options.Stdout, "Quiet hours: %s-%s (%s)\n", credentials.QuietHoursStart, credentials.QuietHoursEnd, state); err != nil {
+					return err
+				}
+			}
+			_, err = fmt.Fprintf(options.Stdout,
+				"Silence rules: %d\nSounds: turn-complete=%s approval-required=%s attention-required=%s\n",
+				len(credentials.SilenceRules),
+				statusSound(credentials, notification.EventTurnComplete),
+				statusSound(credentials, notification.EventApprovalRequired),
+				statusSound(credentials, notification.EventAttentionRequired),
+			)
+			return err
+		},
+	}
+}
+
+func statusSound(credentials config.Credentials, event notification.Event) string {
+	message, err := notification.Build("vibe-pushover", event, nil)
+	if err != nil {
+		return effectiveSound(credentials, event)
+	}
+	profile := credentials.NotificationProfile
+	if profile == "" {
+		profile = "balanced"
+	}
+	if !notification.ShouldDeliver(event, profile) {
+		return "suppressed"
+	}
+	message, err = notification.ApplyProfile(message, event, profile)
+	if err != nil {
+		return effectiveSound(credentials, event)
+	}
+	credentials.NotificationProfile = profile
+	message = applyConfiguredSound(message, event, credentials)
+	if message.Sound == "" {
+		return "default"
+	}
+	return message.Sound
 }
 
 func silenceCommand(options Options) *cli.Command {

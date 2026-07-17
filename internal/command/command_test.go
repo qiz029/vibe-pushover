@@ -526,6 +526,114 @@ func TestDeviceCommandShowsSetsAndClearsTarget(t *testing.T) {
 	}
 }
 
+func TestStatusCommandSummarizesDeliveryControlsWithoutSecrets(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken:            "secret-app-token",
+		UserKey:             "secret-user-key",
+		Device:              "iphone,ipad",
+		NotificationProfile: "watch",
+		SnoozedUntil:        "2026-07-18T07:00:00Z",
+		FocusUntil:          "2026-07-18T08:00:00Z",
+		QuietHoursStart:     "22:00",
+		QuietHoursEnd:       "08:00",
+		TurnCompleteSound:   "magic",
+		ApprovalSound:       "default",
+		SilenceRules: []config.SilenceRule{
+			{Agent: "codex", Event: "turn-complete"},
+			{Project: "private", Event: "all"},
+		},
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &bytes.Buffer{},
+		Now: func() time.Time { return time.Date(2026, time.July, 17, 23, 0, 0, 0, time.FixedZone("PDT", -7*60*60)) },
+	})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "status", "--config", path}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := strings.Join([]string{
+		"Profile: watch",
+		"Device target: iphone,ipad",
+		"Snooze: active until 2026-07-18 00:00 PDT",
+		"Focus: active until 2026-07-18 01:00 PDT",
+		"Quiet hours: 22:00-08:00 (active now)",
+		"Silence rules: 2",
+		"Sounds: turn-complete=magic approval-required=default attention-required=persistent",
+	}, "\n")
+	if got := strings.TrimSpace(stdout.String()); got != want {
+		t.Fatalf("status output =\n%s\nwant =\n%s", got, want)
+	}
+	if strings.Contains(stdout.String(), "secret-app-token") || strings.Contains(stdout.String(), "secret-user-key") {
+		t.Fatalf("status output leaked credentials: %s", stdout.String())
+	}
+}
+
+func TestStatusCommandShowsDefaultActiveDeliveryState(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var stdout bytes.Buffer
+	app := command.New(command.Options{Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &bytes.Buffer{}})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "status", "--config", path}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, want := range []string{
+		"Profile: balanced", "Device target: all", "Snooze: off", "Focus: off", "Quiet hours: off", "Silence rules: 0",
+		"Sounds: turn-complete=none approval-required=persistent attention-required=persistent",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("status output does not contain %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
+func TestStatusCommandShowsProfileAdjustedEffectiveSounds(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", NotificationProfile: "quiet",
+		TurnCompleteSound: "magic", ApprovalSound: "persistent", AttentionSound: "incoming",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var stdout bytes.Buffer
+	app := command.New(command.Options{Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &bytes.Buffer{}})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "status", "--config", path}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if want := "Sounds: turn-complete=none approval-required=none attention-required=none"; !strings.Contains(stdout.String(), want) {
+		t.Fatalf("status output does not contain %q:\n%s", want, stdout.String())
+	}
+}
+
+func TestStatusCommandShowsProfileSuppressedEvents(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", NotificationProfile: "urgent",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var stdout bytes.Buffer
+	app := command.New(command.Options{Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &bytes.Buffer{}})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "status", "--config", path}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if want := "Sounds: turn-complete=suppressed approval-required=persistent attention-required=persistent"; !strings.Contains(stdout.String(), want) {
+		t.Fatalf("status output does not contain %q:\n%s", want, stdout.String())
+	}
+}
+
 func TestSoundCommandShowsSetsDefaultsAndResetsEventSounds(t *testing.T) {
 	t.Parallel()
 
@@ -1609,7 +1717,7 @@ func TestAgentsCommandShowsCapabilities(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"aider", "amp", "antigravity", "auggie", "claude", "cline", "codebuddy", "codewhale", "codex", "copilot", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "kimi", "kiro", "mimo", "mistral", "omp", "openhands", "opencode", "pi", "qoder", "qwen", "rovo", "tabnine", "trae", "vscode", "windsurf", "workbuddy", "zcode",
+		"aider", "amp", "antigravity", "auggie", "claude", "cline", "codebuddy", "codewhale", "codex", "copilot", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "junie", "kimi", "kiro", "mimo", "mistral", "omp", "openhands", "opencode", "pi", "qoder", "qwen", "rovo", "tabnine", "trae", "vscode", "windsurf", "workbuddy", "zcode",
 		"completion+approval", "completion+approval+attention", "completion+attention", "completion only",
 	} {
 		if !strings.Contains(output, want) {
