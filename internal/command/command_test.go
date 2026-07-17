@@ -268,6 +268,45 @@ func TestTestCommandCanForceCompletionDeliveryDuringFocus(t *testing.T) {
 	}
 }
 
+func TestTestCommandReportsSilenceRuleSuppressionAndSupportsForce(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key",
+		SilenceRules: []config.SilenceRule{{Agent: "vibe-pushover", Event: "turn-complete"}},
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	requests := 0
+	stdout := &bytes.Buffer{}
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: stdout, Stderr: &bytes.Buffer{},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			requests++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"status":1,"request":"request-id"}`)),
+				Header:     make(http.Header),
+			}, nil
+		})},
+		Endpoint: "https://pushover.test/messages.json",
+	})
+	args := []string{"vibe-pushover", "test", "--config", path, "--event", "turn-complete"}
+	if err := app.Run(context.Background(), args); err != nil {
+		t.Fatalf("regular test Run() error = %v", err)
+	}
+	if requests != 0 || !strings.Contains(stdout.String(), "suppressed by a matching silence rule") {
+		t.Fatalf("regular test requests = %d, output = %q", requests, stdout.String())
+	}
+	if err := app.Run(context.Background(), append(args, "--force")); err != nil {
+		t.Fatalf("forced test Run() error = %v", err)
+	}
+	if requests != 1 || !strings.Contains(stdout.String(), "Test turn-complete notification sent") {
+		t.Fatalf("forced test requests = %d, output = %q", requests, stdout.String())
+	}
+}
+
 func TestTestCommandSupportsCompletionAndAttentionStyles(t *testing.T) {
 	t.Parallel()
 

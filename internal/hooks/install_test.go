@@ -31,6 +31,22 @@ func TestDefaultPathPiHonorsAgentDir(t *testing.T) {
 	}
 }
 
+func TestDefaultPathGajaeConfigDirIsRelativeToHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("GJC_CODING_AGENT_DIR", "")
+	t.Setenv("GJC_CONFIG_DIR", ".gjc-alt")
+
+	got, err := hooks.DefaultPath("gajae")
+	if err != nil {
+		t.Fatalf("DefaultPath() error = %v", err)
+	}
+	want := filepath.Join(home, ".gjc-alt", "agent", "config.yml")
+	if got != want {
+		t.Fatalf("DefaultPath() = %q, want %q", got, want)
+	}
+}
+
 func TestDetectedAgentsFindsEverySupportedConfigHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

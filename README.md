@@ -188,7 +188,7 @@ vibe-pushover install --agent zcode
 | Cursor | completion | `~/.cursor/hooks.json` |
 | Factory Droid | completion, attention | `~/.factory/settings.json` |
 | DotCraft | completion, approval, Stop-hook failure attention | `~/.craft/hooks.json` |
-| Gajae Code | completion | `$GJC_CODING_AGENT_DIR/config.yml`, `$GJC_CONFIG_DIR/agent/config.yml`, or `~/.gjc/agent/config.yml` |
+| Gajae Code | completion | `$GJC_CODING_AGENT_DIR/config.yml`, `~/<GJC_CONFIG_DIR>/agent/config.yml`, or `~/.gjc/agent/config.yml` |
 | Gemini CLI | completion | `$GEMINI_CLI_HOME/.gemini/settings.json` or `~/.gemini/settings.json` |
 | Goose | completion | `~/.agents/plugins/vibe-pushover/` |
 | Grok Build | completion, failure attention | `$GROK_HOME/hooks/vibe-pushover.json` or `~/.grok/hooks/vibe-pushover.json` |

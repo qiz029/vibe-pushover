@@ -95,7 +95,7 @@ func silenceCommand(options Options) *cli.Command {
 			Flags: []cli.Flag{
 				&cli.StringFlag{Name: "agent", Usage: "match this agent name"},
 				&cli.StringFlag{Name: "project", Usage: "match this project directory name"},
-				&cli.StringFlag{Name: "event", Usage: "turn-complete, approval-required, attention-required, or all", Value: "turn-complete"},
+				&cli.StringFlag{Name: "event", Usage: "turn-complete or all", Value: "turn-complete"},
 				configFlag(),
 			},
 			Action: func(_ context.Context, cmd *cli.Command) error {
@@ -956,7 +956,7 @@ func testCommand(options Options) *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "event", Usage: "turn-complete, approval-required, or attention-required", Value: "approval-required"},
 			&cli.StringFlag{Name: "message", Usage: "test message body", Value: "Test notification delivered successfully."},
-			&cli.BoolFlag{Name: "force", Usage: "send even when snooze, focus, or quiet hours suppress delivery"},
+			&cli.BoolFlag{Name: "force", Usage: "send even when snooze, focus, quiet hours, or silence rules suppress delivery"},
 			configFlag(),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -970,6 +970,14 @@ func testCommand(options Options) *cli.Command {
 			}
 			event := notification.Event(strings.ToLower(strings.TrimSpace(cmd.String("event"))))
 			now := options.Now()
+			cwd, _ := os.Getwd()
+			payload := map[string]any{"cwd": cwd, "message": cmd.String("message")}
+			if credentials.IsSilenced("vibe-pushover", string(event), notification.ProjectName(payload)) && !cmd.Bool("force") {
+				_, err = fmt.Fprintf(options.Stdout,
+					"Test %s notification suppressed by a matching silence rule; use --force to send\n", event,
+				)
+				return err
+			}
 			if credentials.IsSnoozed(now) && !cmd.Bool("force") {
 				until, _ := time.Parse(time.RFC3339Nano, credentials.SnoozedUntil)
 				_, err = fmt.Fprintf(options.Stdout,
@@ -993,10 +1001,7 @@ func testCommand(options Options) *cli.Command {
 				)
 				return err
 			}
-			cwd, _ := os.Getwd()
-			message, err := notification.Build("vibe-pushover", event, map[string]any{
-				"cwd": cwd, "message": cmd.String("message"),
-			})
+			message, err := notification.Build("vibe-pushover", event, payload)
 			if err != nil {
 				return err
 			}

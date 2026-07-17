@@ -230,6 +230,8 @@ func TestRejectsInvalidSilenceRules(t *testing.T) {
 	for _, rule := range []config.SilenceRule{
 		{Event: "turn-complete"},
 		{Agent: "codex", Event: "finished"},
+		{Agent: "codex", Event: "approval-required"},
+		{Project: "private-repo", Event: "attention-required"},
 	} {
 		credentials := config.Credentials{
 			AppToken: "app", UserKey: "user", SilenceRules: []config.SilenceRule{rule},

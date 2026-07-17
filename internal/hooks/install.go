@@ -246,11 +246,7 @@ func DefaultPath(agent string) (string, error) {
 			return filepath.Join(agentDir, "config.yml"), nil
 		}
 		if configDir := strings.TrimSpace(os.Getenv("GJC_CONFIG_DIR")); configDir != "" {
-			configDir, err = expandHome(configDir)
-			if err != nil {
-				return "", fmt.Errorf("resolve Gajae Code config directory: %w", err)
-			}
-			return filepath.Join(configDir, "agent", "config.yml"), nil
+			return filepath.Join(home, configDir, "agent", "config.yml"), nil
 		}
 		return filepath.Join(home, ".gjc", "agent", "config.yml"), nil
 	case "gemini":

@@ -152,9 +152,9 @@ func (c Credentials) Validate() error {
 			return fmt.Errorf("silence_rules[%d] must match an agent or project", index)
 		}
 		switch rule.Event {
-		case "all", "turn-complete", "approval-required", "attention-required":
+		case "all", "turn-complete":
 		default:
-			return fmt.Errorf("silence_rules[%d].event must be all, turn-complete, approval-required, or attention-required", index)
+			return fmt.Errorf("silence_rules[%d].event must be all or turn-complete", index)
 		}
 	}
 	return nil
