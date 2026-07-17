@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 
@@ -401,6 +402,92 @@ func TestInstallAddsMistralVibeCompletionHook(t *testing.T) {
 	}
 }
 
+func TestInstallAddsGrokBuildCompletionAndFailureHooks(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".grok", "hooks", "vibe-pushover.json")
+	changed, err := hooks.Install("grok", path, "/opt/bin/vibe-pushover", "/tmp/pushover config.json")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var got struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Type    string `json:"type"`
+				Command string `json:"command"`
+				Timeout int    `json:"timeout"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if len(got.Hooks["Stop"]) != 1 || len(got.Hooks["StopFailure"]) != 1 {
+		t.Fatalf("Grok hooks = %#v", got.Hooks)
+	}
+	completion := got.Hooks["Stop"][0].Hooks[0]
+	failure := got.Hooks["StopFailure"][0].Hooks[0]
+	if completion.Type != "command" || completion.Timeout != 10 || completion.Command != "'/opt/bin/vibe-pushover' notify --agent grok --event turn-complete --ignore-errors --config '/tmp/pushover config.json'" {
+		t.Fatalf("Grok Stop hook = %#v", completion)
+	}
+	if failure.Type != "command" || failure.Timeout != 10 || failure.Command != "'/opt/bin/vibe-pushover' notify --agent grok --event attention-required --ignore-errors --config '/tmp/pushover config.json'" {
+		t.Fatalf("Grok StopFailure hook = %#v", failure)
+	}
+	changed, err = hooks.Install("grok", path, "/opt/bin/vibe-pushover", "/tmp/pushover config.json")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed Grok Build hooks")
+	}
+}
+
+func TestInstallGrokBuildPreservesHookSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior is platform-specific")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "shared-hooks.json")
+	path := filepath.Join(dir, ".grok", "hooks", "vibe-pushover.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(target, []byte(`{"theme":"dark"}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+
+	if _, err := hooks.Install("grok", path, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("Lstat() error = %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("Install() replaced Grok hook symlink")
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("ReadFile(target) error = %v", err)
+	}
+	if !bytes.Contains(data, []byte(`"Stop"`)) || !bytes.Contains(data, []byte(`"theme": "dark"`)) {
+		t.Fatalf("symlink target not updated or sibling config lost: %s", data)
+	}
+}
+
 func TestInstallMistralVibeAddsFeatureFlagBeforeExistingTables(t *testing.T) {
 	t.Parallel()
 
@@ -604,6 +691,21 @@ func TestDefaultPathMistralHonorsVibeHome(t *testing.T) {
 		t.Fatalf("DefaultPath() error = %v", err)
 	}
 	want := filepath.Join(home, "custom-vibe", "hooks.toml")
+	if got != want {
+		t.Fatalf("DefaultPath() = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultPathGrokHonorsGrokHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("GROK_HOME", "~/custom-grok")
+
+	got, err := hooks.DefaultPath("grok")
+	if err != nil {
+		t.Fatalf("DefaultPath() error = %v", err)
+	}
+	want := filepath.Join(home, "custom-grok", "hooks", "vibe-pushover.json")
 	if got != want {
 		t.Fatalf("DefaultPath() = %q, want %q", got, want)
 	}

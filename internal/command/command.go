@@ -46,11 +46,52 @@ func New(options Options) *cli.Command {
 		Commands: []*cli.Command{
 			setupCommand(options),
 			profileCommand(options),
+			deviceCommand(options),
 			agentsCommand(options),
 			installCommand(options),
 			previewCommand(options),
 			notifyCommand(options),
 			testCommand(options),
+		},
+	}
+}
+
+func deviceCommand(options Options) *cli.Command {
+	return &cli.Command{
+		Name:      "device",
+		Usage:     "show or change the target Pushover device(s)",
+		ArgsUsage: "[name[,name...]|all]",
+		Flags:     []cli.Flag{configFlag()},
+		Action: func(_ context.Context, cmd *cli.Command) error {
+			path, err := configPath(cmd.String("config"))
+			if err != nil {
+				return err
+			}
+			credentials, err := config.Load(path)
+			if err != nil {
+				return err
+			}
+			device := strings.TrimSpace(cmd.Args().First())
+			if device == "" {
+				device = credentials.Device
+				if device == "" {
+					device = "all"
+				}
+				_, err = fmt.Fprintln(options.Stdout, device)
+				return err
+			}
+			if cmd.Args().Len() > 1 {
+				return errors.New("device accepts at most one value")
+			}
+			credentials.Device = normalizeDeviceTarget(device)
+			if credentials.Device == "" {
+				device = "all"
+			}
+			if err := config.Save(path, credentials); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(options.Stdout, "Target Pushover device(s) set to %s\n", device)
+			return err
 		},
 	}
 }
@@ -176,9 +217,15 @@ func setupCommand(options Options) *cli.Command {
 			if profile == "balanced" {
 				profile = ""
 			}
+			device, err := prompter.readOptional("Target Pushover device(s), comma-separated (all; groups may ignore): ")
+			if err != nil {
+				return err
+			}
+			device = normalizeDeviceTarget(device)
 			credentials := config.Credentials{
 				AppToken:            appToken,
 				UserKey:             userKey,
+				Device:              device,
 				NotificationProfile: profile,
 			}
 			path, err := configPath(cmd.String("config"))
@@ -192,6 +239,14 @@ func setupCommand(options Options) *cli.Command {
 			return err
 		},
 	}
+}
+
+func normalizeDeviceTarget(device string) string {
+	device = strings.TrimSpace(device)
+	if strings.EqualFold(device, "all") {
+		return ""
+	}
+	return device
 }
 
 func installCommand(options Options) *cli.Command {
@@ -382,6 +437,7 @@ func sendWithCredentials(ctx context.Context, options Options, credentials confi
 	return client.Send(ctx, pushover.Message{
 		AppToken: credentials.AppToken,
 		UserKey:  credentials.UserKey,
+		Device:   credentials.Device,
 		Title:    message.Title,
 		Body:     message.Body,
 		URL:      message.URL,
@@ -414,7 +470,7 @@ func reserveNotification(store dedupe.Store, fingerprint string) (dedupe.Reserva
 }
 
 func notificationDestination(credentials config.Credentials) string {
-	data := credentials.AppToken + "\x00" + credentials.UserKey
+	data := credentials.AppToken + "\x00" + credentials.UserKey + "\x00" + credentials.Device
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(data)))
 }
 

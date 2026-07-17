@@ -391,6 +391,31 @@ func TestBuildUsesProductNamesInNotificationTitles(t *testing.T) {
 	}
 }
 
+func TestBuildFormatsGrokBuildHookPayload(t *testing.T) {
+	t.Parallel()
+
+	completion, err := notification.Build("grok", notification.EventTurnComplete, map[string]any{
+		"workspaceRoot": "/tmp/grok-project",
+	})
+	if err != nil {
+		t.Fatalf("Build(completion) error = %v", err)
+	}
+	if completion.Title != "✓ Grok Build finished · grok-project" {
+		t.Fatalf("completion title = %q", completion.Title)
+	}
+
+	failure, err := notification.Build("grok", notification.EventAttentionRequired, map[string]any{
+		"workspaceRoot": "/tmp/grok-project",
+		"error":         "Model request timed out",
+	})
+	if err != nil {
+		t.Fatalf("Build(failure) error = %v", err)
+	}
+	if failure.Title != "⚠ Grok Build needs attention · grok-project" || failure.Body != "Model request timed out" {
+		t.Fatalf("failure notification = %#v", failure)
+	}
+}
+
 func TestApplyQuietProfileSilencesApproval(t *testing.T) {
 	t.Parallel()
 

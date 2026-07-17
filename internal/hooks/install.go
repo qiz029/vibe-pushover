@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -30,6 +31,7 @@ var agentCatalog = []AgentInfo{
 	{Name: "droid", DisplayName: "Factory Droid", Capabilities: "completion+attention", Resource: "hooks"},
 	{Name: "gemini", DisplayName: "Gemini CLI", Capabilities: "completion only", Resource: "hooks"},
 	{Name: "goose", DisplayName: "Goose", Capabilities: "completion only", Resource: "plugin"},
+	{Name: "grok", DisplayName: "Grok Build", Capabilities: "completion+attention", Resource: "hooks"},
 	{Name: "hermes", DisplayName: "Hermes Agent", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "kimi", DisplayName: "Kimi Code CLI", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "kiro", DisplayName: "Kiro", Capabilities: "completion only (macOS/Linux)", Resource: "hooks"},
@@ -105,6 +107,15 @@ func DefaultPath(agent string) (string, error) {
 			return filepath.Join(vibeHome, "hooks.toml"), nil
 		}
 	}
+	if agent == "grok" {
+		if grokHome := os.Getenv("GROK_HOME"); grokHome != "" {
+			grokHome, err := expandHome(grokHome)
+			if err != nil {
+				return "", fmt.Errorf("resolve Grok Build home: %w", err)
+			}
+			return filepath.Join(grokHome, "hooks", "vibe-pushover.json"), nil
+		}
+	}
 	if agent == "pi" {
 		if agentDir := os.Getenv("PI_CODING_AGENT_DIR"); agentDir != "" {
 			agentDir, err := expandHome(agentDir)
@@ -160,6 +171,8 @@ func DefaultPath(agent string) (string, error) {
 		return filepath.Join(home, ".gemini", "settings.json"), nil
 	case "goose":
 		return filepath.Join(home, ".agents", "plugins", "vibe-pushover"), nil
+	case "grok":
+		return filepath.Join(home, ".grok", "hooks", "vibe-pushover.json"), nil
 	case "hermes":
 		return filepath.Join(home, ".hermes", "config.yaml"), nil
 	case "kimi":
@@ -259,6 +272,13 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	if agent == "omp" {
 		return installOMPExtension(path, executable, pushoverConfig)
 	}
+	if agent == "grok" {
+		var err error
+		path, err = resolveJSONHookPath(path, "Grok Build")
+		if err != nil {
+			return false, err
+		}
+	}
 
 	root, err := readRoot(path)
 	if err != nil {
@@ -276,12 +296,20 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 
 	changed := false
 	for _, spec := range genericHookSpecs(agent) {
-		command := shellQuote(executable) + " notify --agent " + agent + " --event " + spec.Event + " --ignore-errors"
-		if spec.Flag != "" {
-			command += " " + spec.Flag
-		}
-		if pushoverConfig != "" {
-			command += " --config " + shellQuote(pushoverConfig)
+		command := ""
+		if agent == "grok" {
+			command, err = grokNotifyCommand(runtime.GOOS, executable, spec.Event, pushoverConfig)
+			if err != nil {
+				return false, err
+			}
+		} else {
+			command = shellQuote(executable) + " notify --agent " + agent + " --event " + spec.Event + " --ignore-errors"
+			if spec.Flag != "" {
+				command += " " + spec.Flag
+			}
+			if pushoverConfig != "" {
+				command += " --config " + shellQuote(pushoverConfig)
+			}
 		}
 		entry := hookGroup{Matcher: spec.Matcher, Hooks: []hookCommand{{
 			Type:    "command",
@@ -305,6 +333,24 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func resolveJSONHookPath(path, agent string) (string, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return path, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("inspect %s hook file: %w", agent, err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return path, nil
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s hook symlink: %w", agent, err)
+	}
+	return resolved, nil
 }
 
 func isSupportedAgent(name string) bool {
@@ -345,6 +391,11 @@ func genericHookSpecs(agent string) []hookSpec {
 		return []hookSpec{
 			{Name: "Stop", Event: "turn-complete", Timeout: 10},
 			{Name: "PermissionRequest", Event: "approval-required", Timeout: 10},
+		}
+	case "grok":
+		return []hookSpec{
+			{Name: "Stop", Event: "turn-complete", Timeout: 10},
+			{Name: "StopFailure", Event: "attention-required", Timeout: 10},
 		}
 	default:
 		return []hookSpec{
@@ -448,9 +499,13 @@ func isOwnedCommand(command, agent, event string) bool {
 }
 
 func isOwnedCommandWithFlag(command, agent, event, flag string) bool {
-	const separator = "' notify --agent "
+	if len(command) < 2 || (command[0] != '\'' && command[0] != '"') {
+		return false
+	}
+	quote := command[0]
+	separator := string(quote) + " notify --agent "
 	separatorIndex := strings.LastIndex(command, separator)
-	if separatorIndex <= 0 || !strings.HasPrefix(command, "'") {
+	if separatorIndex <= 0 {
 		return false
 	}
 	tail := command[separatorIndex+2:]
@@ -462,7 +517,7 @@ func isOwnedCommandWithFlag(command, agent, event, flag string) bool {
 		return true
 	}
 	configValue, ok := strings.CutPrefix(tail, base+" --config ")
-	return ok && len(configValue) >= 2 && strings.HasPrefix(configValue, "'") && strings.HasSuffix(configValue, "'")
+	return ok && len(configValue) >= 2 && configValue[0] == quote && configValue[len(configValue)-1] == quote
 }
 
 func hookMatches(got map[string]any, want hookCommand) bool {

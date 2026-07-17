@@ -56,11 +56,43 @@ func TestSaveAndLoadNotificationProfile(t *testing.T) {
 	}
 }
 
+func TestSaveAndLoadTargetDevices(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	want := config.Credentials{
+		AppToken: "app-token",
+		UserKey:  "user-key",
+		Device:   "iphone,ipad",
+	}
+	if err := config.Save(path, want); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got != want {
+		t.Fatalf("Load() = %#v, want %#v", got, want)
+	}
+}
+
 func TestRejectsUnknownNotificationProfile(t *testing.T) {
 	t.Parallel()
 
 	err := (config.Credentials{AppToken: "app", UserKey: "user", NotificationProfile: "loudest"}).Validate()
 	if err == nil {
 		t.Fatal("Validate() accepted unknown notification profile")
+	}
+}
+
+func TestRejectsInvalidTargetDevice(t *testing.T) {
+	t.Parallel()
+
+	for _, device := range []string{"iphone 15", "iphone,", "this-device-name-is-over-25-characters"} {
+		err := (config.Credentials{AppToken: "app", UserKey: "user", Device: device}).Validate()
+		if err == nil {
+			t.Fatalf("Validate() accepted invalid device %q", device)
+		}
 	}
 }

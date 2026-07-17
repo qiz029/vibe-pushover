@@ -5,7 +5,7 @@
 - finishes a turn;
 - needs manual approval or otherwise needs your attention.
 
-The CLI currently integrates with 22 coding agents: Aider, Amp, Augment Auggie, Claude Code, Codex CLI, GitHub Copilot CLI, Snowflake Cortex Code, Cursor, Factory Droid, Gemini CLI, Goose, Hermes Agent, Kimi Code CLI, Kiro, Mistral Vibe, Oh My Pi, OpenCode, Pi, Qoder, Qwen Code, VS Code Agent, and Windsurf. It is written in Go and uses [`urfave/cli`](https://github.com/urfave/cli).
+The CLI currently integrates with 23 coding agents: Aider, Amp, Augment Auggie, Claude Code, Codex CLI, GitHub Copilot CLI, Snowflake Cortex Code, Cursor, Factory Droid, Gemini CLI, Goose, Grok Build, Hermes Agent, Kimi Code CLI, Kiro, Mistral Vibe, Oh My Pi, OpenCode, Pi, Qoder, Qwen Code, VS Code Agent, and Windsurf. It is written in Go and uses [`urfave/cli`](https://github.com/urfave/cli).
 
 ## Install
 
@@ -18,8 +18,8 @@ curl -fsSL https://github.com/qiz029/vibe-pushover/releases/latest/download/inst
 By default the installer writes to `~/.local/bin`. Override it with `VIBE_PUSHOVER_INSTALL_DIR`, or pin a release with `VIBE_PUSHOVER_VERSION`:
 
 ```sh
-curl -fsSL https://github.com/qiz029/vibe-pushover/releases/download/v0.6.0/install.sh | \
-  VIBE_PUSHOVER_VERSION=v0.6.0 VIBE_PUSHOVER_INSTALL_DIR="$HOME/bin" sh
+curl -fsSL https://github.com/qiz029/vibe-pushover/releases/download/v0.8.0/install.sh | \
+  VIBE_PUSHOVER_VERSION=v0.8.0 VIBE_PUSHOVER_INSTALL_DIR="$HOME/bin" sh
 ```
 
 `VIBE_PUSHOVER_DOWNLOAD_BASE_URL` can point the installer at a trusted mirror; when set, `VIBE_PUSHOVER_VERSION` is also required.
@@ -48,6 +48,7 @@ vibe-pushover setup
 Pushover application token:
 Pushover user/group key:
 Notification profile [balanced/quiet/watch] (balanced):
+Target Pushover device(s), comma-separated (all; groups may ignore):
 Saved Pushover credentials to ...
 ```
 
@@ -66,7 +67,14 @@ The notification profile can be viewed or changed later without re-entering the 
 ```sh
 vibe-pushover profile
 vibe-pushover profile watch
+
+vibe-pushover device
+vibe-pushover device iphone
+vibe-pushover device iphone,ipad
+vibe-pushover device all
 ```
+
+Targeting a device is optional. It is useful when the same Pushover account is active on several computers or phones and you only want coding-agent alerts on the phone that mirrors to your watch. Device names come from the Pushover dashboard, use letters, numbers, `_`, or `-`, and are limited to 25 characters each. Pushover ignores device targeting for ordinary groups and multi-user requests; a single Team-owned group can filter by device name. If a named device is invalid or no longer enabled, Pushover may broadcast to all active devices instead of dropping the message.
 
 ## Install agent integrations
 
@@ -76,6 +84,7 @@ List the supported agents and their capabilities, then install one or more integ
 vibe-pushover agents
 vibe-pushover install --agent codex
 vibe-pushover install --agent gemini
+vibe-pushover install --agent grok
 vibe-pushover install --agent mistral
 vibe-pushover install --agent omp
 vibe-pushover install --agent opencode
@@ -94,6 +103,7 @@ vibe-pushover install --agent opencode
 | Factory Droid | completion, attention | `~/.factory/settings.json` |
 | Gemini CLI | completion | `$GEMINI_CLI_HOME/.gemini/settings.json` or `~/.gemini/settings.json` |
 | Goose | completion | `~/.agents/plugins/vibe-pushover/` |
+| Grok Build | completion, failure attention | `$GROK_HOME/hooks/vibe-pushover.json` or `~/.grok/hooks/vibe-pushover.json` |
 | Hermes Agent | completion, approval | `$HERMES_HOME/config.yaml` or `~/.hermes/config.yaml` |
 | Kimi Code CLI | completion, approval | `$KIMI_CODE_HOME/config.toml` or `~/.kimi-code/config.toml` |
 | Kiro | completion (macOS/Linux) | `~/.kiro/hooks/vibe-pushover.json` |
@@ -106,7 +116,7 @@ vibe-pushover install --agent opencode
 | VS Code Agent | completion | `$COPILOT_HOME/hooks/vibe-pushover.json` or `~/.copilot/hooks/vibe-pushover.json` (preview hook API) |
 | Windsurf | completion | `~/.codeium/windsurf/hooks.json` |
 
-The integrations follow each agent's native hook, plugin, or notification-command mechanism. They preserve existing settings, only replace entries owned by `vibe-pushover`, and repeated installs are idempotent. Copilot's attention event is limited to permission and elicitation dialogs. Droid's attention event can also mean the agent has been idle and is waiting for input. Amp reports its `awaiting-approval` state separately from turn errors. Qwen sends separate approval notifications and idle-input attention notifications; re-entered active `Stop` hooks are filtered to avoid duplicate or premature completion messages. Qoder applies the same active-Stop filter. Hermes sends approval notifications only for human-facing CLI or gateway decisions and skips `approvals.mode=smart` automatic decisions. Oh My Pi ignores `agent_end` events that announce an automatic continuation and reports its native tool-approval event separately. When session logging is enabled, Mistral Vibe filters inherited subagent `post_agent_turn` events using their official `agents/<session>/messages.jsonl` layout; with logging disabled, its payload does not identify subagents, so fan-out can produce extra completion notifications. Aider, Auggie, Cursor, Gemini, Goose, Kiro, Mistral Vibe, Pi, Qoder, VS Code Agent, and Windsurf currently expose completion notifications only through the installed integration.
+The integrations follow each agent's native hook, plugin, or notification-command mechanism. They preserve existing settings, only replace entries owned by `vibe-pushover`, and repeated installs are idempotent. Copilot's attention event is limited to permission and elicitation dialogs. Droid's attention event can also mean the agent has been idle and is waiting for input. Amp reports its `awaiting-approval` state separately from turn errors. Grok Build maps its top-level `Stop` event to completion and `StopFailure` to attention; its separate `SubagentStop` event is deliberately not installed, so child completions stay quiet. Qwen sends separate approval notifications and idle-input attention notifications; re-entered active `Stop` hooks are filtered to avoid duplicate or premature completion messages. Qoder applies the same active-Stop filter. Hermes sends approval notifications only for human-facing CLI or gateway decisions and skips `approvals.mode=smart` automatic decisions. Oh My Pi ignores `agent_end` events that announce an automatic continuation and reports its native tool-approval event separately. When session logging is enabled, Mistral Vibe filters inherited subagent `post_agent_turn` events using their official `agents/<session>/messages.jsonl` layout; with logging disabled, its payload does not identify subagents, so fan-out can produce extra completion notifications. Aider, Auggie, Cursor, Gemini, Goose, Kiro, Mistral Vibe, Pi, Qoder, VS Code Agent, and Windsurf currently expose completion notifications only through the installed integration.
 
 Because Aider supports only one `notifications-command`, installation refuses to replace an existing custom command. Remove or compose that command yourself before retrying if you want `vibe-pushover` to own the setting.
 
@@ -155,6 +165,7 @@ Notifications are intentionally compact for phones and watches:
 - An approval request uses a title such as `⚠ Codex needs approval · vibe-pushover` and shows only the tool plus its command or reason, truncated to 300 Unicode characters. It is high priority, uses Pushover's `persistent` sound, and expires after 30 minutes.
 - An attention notification uses a title such as `⚠ Droid needs attention · vibe-pushover`, carries a compact reason, and uses the same high-priority delivery as an approval request.
 - If a hook payload supplies an HTTP(S) `url`, `session_url`, `web_url`, or `details_url`, the notification includes Pushover's supplementary `Open result` or `Open agent` action. Unsafe and local-only URL schemes are ignored.
+- By default Pushover delivers to every active device on the account. `setup` or `vibe-pushover device ...` can restrict delivery to one or more named devices without changing the agent hooks.
 
 Hook delivery also suppresses exact repeats for three seconds across CLI processes. The fingerprint includes the agent, event, a non-secret hash of the Pushover destination, rendered notification fields, and stable session/turn/tool IDs when available. A failed Pushover request releases its reservation so a later hook can retry; an unavailable or corrupt dedupe cache fails open and sends the notification with a warning. The private cache is stored at `~/Library/Caches/vibe-pushover/dedupe.json` on macOS or `$XDG_CACHE_HOME/vibe-pushover/dedupe.json` on Linux.
 

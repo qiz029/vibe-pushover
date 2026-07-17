@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type Credentials struct {
 	AppToken            string `json:"app_token"`
 	UserKey             string `json:"user_key"`
+	Device              string `json:"device,omitempty"`
 	NotificationProfile string `json:"notification_profile,omitempty"`
 }
 
@@ -83,10 +85,29 @@ func (c Credentials) Validate() error {
 	if c.UserKey == "" {
 		return errors.New("user key is required")
 	}
+	if c.Device != "" {
+		for _, device := range strings.Split(c.Device, ",") {
+			if !validDeviceName(device) {
+				return fmt.Errorf("Pushover device names must be 1-25 characters using letters, numbers, underscore, or hyphen, got %q", device)
+			}
+		}
+	}
 	switch c.NotificationProfile {
 	case "", "balanced", "quiet", "watch":
 	default:
 		return fmt.Errorf("notification profile must be balanced, quiet, or watch, got %q", c.NotificationProfile)
 	}
 	return nil
+}
+
+func validDeviceName(device string) bool {
+	if len(device) == 0 || len(device) > 25 {
+		return false
+	}
+	for _, char := range device {
+		if (char < 'A' || char > 'Z') && (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '_' && char != '-' {
+			return false
+		}
+	}
+	return true
 }

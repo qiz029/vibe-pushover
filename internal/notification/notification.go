@@ -87,7 +87,7 @@ func Build(agent string, event Event, payload map[string]any) (Message, error) {
 		}, event, payload), nil
 	case EventAttentionRequired:
 		body := "Agent needs your attention."
-		if detail := firstLine(firstString(payload, "message", "reason", "title")); detail != "" {
+		if detail := firstLine(firstString(payload, "message", "reason", "error", "title")); detail != "" {
 			body = detail
 		}
 		return withSupplementaryAction(Message{
@@ -177,6 +177,9 @@ func payloadWorkingDirectory(payload map[string]any) string {
 	if cwd := stringValue(payload, "cwd"); cwd != "" {
 		return cwd
 	}
+	if workspace := firstString(payload, "workspaceRoot", "workspace_root", "workspace"); workspace != "" {
+		return workspace
+	}
 	if roots, ok := payload["workspace_roots"].([]any); ok && len(roots) > 0 {
 		for _, raw := range roots {
 			if root, ok := raw.(string); ok && strings.TrimSpace(root) != "" {
@@ -218,6 +221,7 @@ func firstLine(value string) string {
 func displayName(value string) string {
 	if name, ok := map[string]string{
 		"cortex":   "Cortex Code",
+		"grok":     "Grok Build",
 		"mistral":  "Mistral Vibe",
 		"omp":      "Oh My Pi",
 		"opencode": "OpenCode",

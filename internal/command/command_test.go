@@ -86,11 +86,89 @@ func TestSetupCommandStoresInteractiveNotificationProfile(t *testing.T) {
 	}
 }
 
-func TestNotifyCommandSendsHookPayload(t *testing.T) {
+func TestSetupCommandStoresInteractiveTargetDevices(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	app := command.New(command.Options{
+		Stdin: bytes.NewBufferString("app-token\nuser-key\nbalanced\niphone,ipad\n"), Stdout: &bytes.Buffer{},
+	})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "setup", "--config", path}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.Device != "iphone,ipad" {
+		t.Fatalf("Device = %q, want iphone,ipad", got.Device)
+	}
+}
+
+func TestSetupCommandNormalizesAllTargetDevicesToBroadcast(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	app := command.New(command.Options{
+		Stdin: bytes.NewBufferString("app-token\nuser-key\nbalanced\nall\n"), Stdout: &bytes.Buffer{},
+	})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "setup", "--config", path}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.Device != "" {
+		t.Fatalf("Device = %q, want empty broadcast target", got.Device)
+	}
+}
+
+func TestDeviceCommandShowsSetsAndClearsTarget(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var stdout bytes.Buffer
+	app := command.New(command.Options{Stdin: &bytes.Buffer{}, Stdout: &stdout})
+
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "device", "--config", path}); err != nil {
+		t.Fatalf("show Run() error = %v", err)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "all" {
+		t.Fatalf("show output = %q, want all", got)
+	}
+	stdout.Reset()
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "device", "iphone,ipad", "--config", path}); err != nil {
+		t.Fatalf("set Run() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.Device != "iphone,ipad" {
+		t.Fatalf("Device after set = %q, want iphone,ipad", got.Device)
+	}
+	stdout.Reset()
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "device", "all", "--config", path}); err != nil {
+		t.Fatalf("clear Run() error = %v", err)
+	}
+	got, err = config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() after clear error = %v", err)
+	}
+	if got.Device != "" {
+		t.Fatalf("Device after clear = %q, want empty", got.Device)
+	}
+}
+
+func TestNotifyCommandSendsHookPayload(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key", Device: "iphone"}); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
@@ -100,6 +178,7 @@ func TestNotifyCommandSendsHookPayload(t *testing.T) {
 			t.Errorf("ParseForm() error = %v", err)
 		}
 		received = map[string]string{
+			"device":    r.Form.Get("device"),
 			"title":     r.Form.Get("title"),
 			"message":   r.Form.Get("message"),
 			"priority":  r.Form.Get("priority"),
@@ -150,6 +229,9 @@ func TestNotifyCommandSendsHookPayload(t *testing.T) {
 	if got["url"] != "https://example.com/agent/42" || got["url_title"] != "Open agent" {
 		t.Fatalf("supplementary action = %q (%q)", got["url"], got["url_title"])
 	}
+	if got["device"] != "iphone" {
+		t.Fatalf("device = %q, want iphone", got["device"])
+	}
 }
 
 func TestNotifyCommandDeduplicatesImmediateRepeatAcrossProcesses(t *testing.T) {
@@ -191,6 +273,45 @@ func TestNotifyCommandDeduplicatesImmediateRepeatAcrossProcesses(t *testing.T) {
 	run()
 	if requests != 1 {
 		t.Fatalf("Pushover requests = %d, want 1 for an immediate duplicate", requests)
+	}
+}
+
+func TestNotifyCommandDoesNotDedupeAcrossTargetDevices(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	requests := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"status":1}`)), Header: make(http.Header)}, nil
+	})}
+	now := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
+	run := func(device string) {
+		t.Helper()
+		if err := config.Save(configPath, config.Credentials{AppToken: "app-token", UserKey: "user-key", Device: device}); err != nil {
+			t.Fatalf("Save(%q) error = %v", device, err)
+		}
+		app := command.New(command.Options{
+			Stdin:      bytes.NewBufferString(`{"session_id":"session-1","turn_id":"turn-4","cwd":"/tmp/demo","last_assistant_message":"Tests pass."}`),
+			Stdout:     &bytes.Buffer{},
+			Stderr:     &bytes.Buffer{},
+			HTTPClient: httpClient,
+			Endpoint:   "https://pushover.test/messages.json",
+			DedupePath: filepath.Join(dir, "dedupe.json"),
+			Now:        func() time.Time { return now },
+		})
+		if err := app.Run(context.Background(), []string{
+			"vibe-pushover", "notify", "--config", configPath, "--agent", "codex", "--event", "turn-complete",
+		}); err != nil {
+			t.Fatalf("Run(%q) error = %v", device, err)
+		}
+	}
+
+	run("iphone")
+	run("ipad")
+	if requests != 2 {
+		t.Fatalf("Pushover requests = %d, want 2 for different target devices", requests)
 	}
 }
 
@@ -747,7 +868,7 @@ func TestAgentsCommandShowsCapabilities(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"aider", "amp", "auggie", "claude", "codex", "copilot", "cortex", "cursor", "droid", "gemini", "goose", "hermes", "kimi", "kiro", "mistral", "omp", "opencode", "pi", "qoder", "qwen", "vscode", "windsurf",
+		"aider", "amp", "auggie", "claude", "codex", "copilot", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "kimi", "kiro", "mistral", "omp", "opencode", "pi", "qoder", "qwen", "vscode", "windsurf",
 		"completion+approval", "completion+approval+attention", "completion+attention", "completion only",
 	} {
 		if !strings.Contains(output, want) {

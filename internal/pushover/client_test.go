@@ -22,6 +22,7 @@ func TestClientSendsMessage(t *testing.T) {
 		want := map[string]string{
 			"token":     "app-token",
 			"user":      "user-key",
+			"device":    "iphone,ipad",
 			"title":     "Agent turn complete",
 			"message":   "codex finished in vibe-pushover",
 			"priority":  "0",
@@ -42,6 +43,7 @@ func TestClientSendsMessage(t *testing.T) {
 	err := client.Send(context.Background(), pushover.Message{
 		AppToken: "app-token",
 		UserKey:  "user-key",
+		Device:   "iphone,ipad",
 		Title:    "Agent turn complete",
 		Body:     "codex finished in vibe-pushover",
 		Priority: 0,

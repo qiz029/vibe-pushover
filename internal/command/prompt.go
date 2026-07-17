@@ -92,3 +92,14 @@ func (p *secretPrompter) readChoice(label, defaultValue string, choices ...strin
 		}
 	}
 }
+
+func (p *secretPrompter) readOptional(label string) (string, error) {
+	if _, err := fmt.Fprint(p.output, label); err != nil {
+		return "", err
+	}
+	value, err := p.buffered.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("read value: %w", err)
+	}
+	return strings.TrimSpace(value), nil
+}

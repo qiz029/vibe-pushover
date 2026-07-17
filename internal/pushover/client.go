@@ -16,6 +16,7 @@ const DefaultEndpoint = "https://api.pushover.net/1/messages.json"
 type Message struct {
 	AppToken string
 	UserKey  string
+	Device   string
 	Title    string
 	Body     string
 	URL      string
@@ -41,6 +42,9 @@ func (c *Client) Send(ctx context.Context, message Message) error {
 		"title":    {message.Title},
 		"message":  {message.Body},
 		"priority": {strconv.Itoa(message.Priority)},
+	}
+	if message.Device != "" {
+		form.Set("device", message.Device)
 	}
 	if message.Sound != "" {
 		form.Set("sound", message.Sound)
