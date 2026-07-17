@@ -63,6 +63,25 @@ func TestSetupCommandRepromptsForEmptyCredential(t *testing.T) {
 	}
 }
 
+func TestSetupCommandStoresInteractiveNotificationProfile(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	app := command.New(command.Options{
+		Stdin: bytes.NewBufferString("app-token\nuser-key\nwatch\n"), Stdout: &bytes.Buffer{},
+	})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "setup", "--config", path}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.NotificationProfile != "watch" {
+		t.Fatalf("NotificationProfile = %q, want watch", got.NotificationProfile)
+	}
+}
+
 func TestNotifyCommandSendsHookPayload(t *testing.T) {
 	t.Parallel()
 
@@ -121,6 +140,107 @@ func TestNotifyCommandSendsHookPayload(t *testing.T) {
 	}
 	if got["ttl"] != "1800" {
 		t.Fatalf("ttl = %q, want 1800", got["ttl"])
+	}
+}
+
+func TestNotifyCommandAppliesConfiguredNotificationProfile(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", NotificationProfile: "watch",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var priority, sound string
+	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("ParseForm() error = %v", err)
+		}
+		priority, sound = r.Form.Get("priority"), r.Form.Get("sound")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"status":1,"request":"request-id"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	app := command.New(command.Options{
+		Stdin: bytes.NewBufferString(`{"cwd":"/tmp/demo"}`), Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{},
+		HTTPClient: httpClient, Endpoint: "https://pushover.test/messages.json",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--config", path, "--agent", "codex", "--event", "turn-complete",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if priority != "0" || sound != "pushover" {
+		t.Fatalf("sent priority=%q sound=%q, want watch profile", priority, sound)
+	}
+}
+
+func TestPreviewCommandShowsNotificationWithoutCredentials(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin:  bytes.NewBufferString(`{"cwd":"/tmp/demo","last_assistant_message":"All tests pass.\nMore detail."}`),
+		Stdout: &stdout, Stderr: &bytes.Buffer{},
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "preview", "--agent", "gemini", "--event", "turn-complete", "--profile", "watch",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	output := stdout.String()
+	for _, want := range []string{
+		"✓ Gemini finished · demo", "All tests pass.", "Priority: 0", "Sound: pushover", "TTL: 1h0m0s",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("preview output does not contain %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestAgentsCommandShowsCapabilities(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	app := command.New(command.Options{Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &bytes.Buffer{}})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "agents"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	output := stdout.String()
+	for _, want := range []string{
+		"claude", "codex", "copilot", "cursor", "droid", "gemini", "goose", "kimi", "opencode", "pi",
+		"completion+approval", "completion+attention", "completion only",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("agents output does not contain %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestProfileCommandUpdatesExistingConfig(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var stdout bytes.Buffer
+	app := command.New(command.Options{Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &bytes.Buffer{}})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "profile", "--config", path, "quiet"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.NotificationProfile != "quiet" || got.AppToken != "app-token" || got.UserKey != "user-key" {
+		t.Fatalf("updated config = %#v", got)
+	}
+	if !strings.Contains(stdout.String(), "quiet") {
+		t.Fatalf("output = %q", stdout.String())
 	}
 }
 

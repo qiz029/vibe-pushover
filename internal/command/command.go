@@ -41,9 +41,102 @@ func New(options Options) *cli.Command {
 		ErrWriter:             options.Stderr,
 		Commands: []*cli.Command{
 			setupCommand(options),
+			profileCommand(options),
+			agentsCommand(options),
 			installCommand(options),
+			previewCommand(options),
 			notifyCommand(options),
 			testCommand(options),
+		},
+	}
+}
+
+func profileCommand(options Options) *cli.Command {
+	return &cli.Command{
+		Name:      "profile",
+		Usage:     "show or change the notification profile",
+		ArgsUsage: "[balanced|quiet|watch]",
+		Flags:     []cli.Flag{configFlag()},
+		Action: func(_ context.Context, cmd *cli.Command) error {
+			path, err := configPath(cmd.String("config"))
+			if err != nil {
+				return err
+			}
+			credentials, err := config.Load(path)
+			if err != nil {
+				return err
+			}
+			profile := strings.ToLower(strings.TrimSpace(cmd.Args().First()))
+			if profile == "" {
+				profile = credentials.NotificationProfile
+				if profile == "" {
+					profile = "balanced"
+				}
+				_, err = fmt.Fprintln(options.Stdout, profile)
+				return err
+			}
+			if cmd.Args().Len() > 1 {
+				return errors.New("profile accepts at most one value")
+			}
+			credentials.NotificationProfile = profile
+			if profile == "balanced" {
+				credentials.NotificationProfile = ""
+			}
+			if err := config.Save(path, credentials); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(options.Stdout, "Notification profile set to %s\n", profile)
+			return err
+		},
+	}
+}
+
+func agentsCommand(options Options) *cli.Command {
+	return &cli.Command{
+		Name:  "agents",
+		Usage: "list supported coding agents and notification capabilities",
+		Action: func(_ context.Context, _ *cli.Command) error {
+			if _, err := fmt.Fprintln(options.Stdout, "AGENT      CAPABILITIES         INTEGRATION"); err != nil {
+				return err
+			}
+			for _, agent := range hooks.Agents() {
+				if _, err := fmt.Fprintf(options.Stdout, "%-10s %-20s %s (%s)\n", agent.Name, agent.Capabilities, agent.DisplayName, agent.Resource); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+}
+
+func previewCommand(options Options) *cli.Command {
+	return &cli.Command{
+		Name:  "preview",
+		Usage: "preview the compact notification generated from a hook payload",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "agent", Usage: "source agent name", Required: true},
+			&cli.StringFlag{Name: "event", Usage: "turn-complete, approval-required, or attention-required", Required: true},
+			&cli.StringFlag{Name: "profile", Usage: "notification profile: balanced, quiet, or watch", Value: "balanced"},
+		},
+		Action: func(_ context.Context, cmd *cli.Command) error {
+			payload, err := readPayload(options.Stdin)
+			if err != nil {
+				return err
+			}
+			event := notification.Event(cmd.String("event"))
+			message, err := notification.Build(cmd.String("agent"), event, payload)
+			if err != nil {
+				return err
+			}
+			message, err = notification.ApplyProfile(message, event, strings.ToLower(strings.TrimSpace(cmd.String("profile"))))
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(options.Stdout,
+				"Title: %s\nBody: %s\nPriority: %d\nSound: %s\nTTL: %s\n",
+				message.Title, message.Body, message.Priority, message.Sound, time.Duration(message.TTL)*time.Second,
+			)
+			return err
 		},
 	}
 }
@@ -66,9 +159,20 @@ func setupCommand(options Options) *cli.Command {
 			if err != nil {
 				return err
 			}
+			profile, err := prompter.readChoice(
+				"Notification profile [balanced/quiet/watch] (balanced): ",
+				"balanced", "balanced", "quiet", "watch",
+			)
+			if err != nil {
+				return err
+			}
+			if profile == "balanced" {
+				profile = ""
+			}
 			credentials := config.Credentials{
-				AppToken: appToken,
-				UserKey:  userKey,
+				AppToken:            appToken,
+				UserKey:             userKey,
+				NotificationProfile: profile,
 			}
 			path, err := configPath(cmd.String("config"))
 			if err != nil {
@@ -88,7 +192,7 @@ func installCommand(options Options) *cli.Command {
 		Name:  "install",
 		Usage: "install notification hooks or an extension for a local agent",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "agent", Usage: "agent to configure: codex, claude, kimi, or pi", Required: true},
+			&cli.StringFlag{Name: "agent", Usage: "agent to configure; run `vibe-pushover agents` for the list", Required: true},
 			&cli.StringFlag{Name: "agent-config", Usage: "override the agent hook or extension path"},
 			&cli.StringFlag{Name: "binary", Usage: "override the vibe-pushover executable path", Value: options.Executable},
 			configFlag(),
@@ -115,9 +219,12 @@ func installCommand(options Options) *cli.Command {
 			if err != nil {
 				return err
 			}
-			resource := "hooks"
-			if agent == "pi" {
-				resource = "extension"
+			resource := "integration"
+			for _, info := range hooks.Agents() {
+				if info.Name == agent {
+					resource = info.Resource
+					break
+				}
 			}
 			if changed {
 				_, err = fmt.Fprintf(options.Stdout, "Installed %s %s in %s\n", agent, resource, path)
@@ -136,7 +243,7 @@ func notifyCommand(options Options) *cli.Command {
 		Hidden: false,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "agent", Usage: "source agent name", Required: true},
-			&cli.StringFlag{Name: "event", Usage: "turn-complete or approval-required", Required: true},
+			&cli.StringFlag{Name: "event", Usage: "turn-complete, approval-required, or attention-required", Required: true},
 			&cli.BoolFlag{Name: "ignore-errors", Usage: "log delivery failures without failing the hook"},
 			// Kept as a no-op so hooks installed by the pre-Kimi release candidate keep working.
 			&cli.BoolFlag{Name: "skip-active-stop", Hidden: true},
@@ -147,9 +254,20 @@ func notifyCommand(options Options) *cli.Command {
 			if err != nil {
 				return err
 			}
-			message, err := notification.Build(cmd.String("agent"), notification.Event(cmd.String("event")), payload)
+			event := notification.Event(cmd.String("event"))
+			message, err := notification.Build(cmd.String("agent"), event, payload)
 			if err == nil {
-				err = send(ctx, options, cmd.String("config"), message)
+				path, pathErr := configPath(cmd.String("config"))
+				if pathErr != nil {
+					err = pathErr
+				} else {
+					credentials, loadErr := config.Load(path)
+					if loadErr != nil {
+						err = loadErr
+					} else if message, err = notification.ApplyProfile(message, event, credentials.NotificationProfile); err == nil {
+						err = sendWithCredentials(ctx, options, credentials, message)
+					}
+				}
 			}
 			if err != nil && cmd.Bool("ignore-errors") {
 				_, _ = fmt.Fprintf(options.Stderr, "vibe-pushover: %v\n", err)
@@ -191,6 +309,10 @@ func send(ctx context.Context, options Options, path string, message notificatio
 	if err != nil {
 		return err
 	}
+	return sendWithCredentials(ctx, options, credentials, message)
+}
+
+func sendWithCredentials(ctx context.Context, options Options, credentials config.Credentials, message notification.Message) error {
 	client := pushover.NewClient(options.HTTPClient, options.Endpoint)
 	return client.Send(ctx, pushover.Message{
 		AppToken: credentials.AppToken,

@@ -3,6 +3,7 @@ package hooks_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -24,6 +25,31 @@ func TestDefaultPathPiHonorsAgentDir(t *testing.T) {
 	want := filepath.Join(dir, "extensions", "vibe-pushover", "index.ts")
 	if got != want {
 		t.Fatalf("DefaultPath() = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultPathsForAdditionalAgents(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("COPILOT_HOME", "~/copilot-home")
+	t.Setenv("GEMINI_CLI_HOME", "~/gemini-home")
+	t.Setenv("XDG_CONFIG_HOME", "~/.xdg")
+
+	tests := map[string]string{
+		"copilot":  filepath.Join(home, "copilot-home", "hooks", "vibe-pushover.json"),
+		"droid":    filepath.Join(home, ".factory", "settings.json"),
+		"gemini":   filepath.Join(home, "gemini-home", ".gemini", "settings.json"),
+		"goose":    filepath.Join(home, ".agents", "plugins", "vibe-pushover"),
+		"opencode": filepath.Join(home, ".xdg", "opencode", "plugins", "vibe-pushover.ts"),
+	}
+	for agent, want := range tests {
+		got, err := hooks.DefaultPath(agent)
+		if err != nil {
+			t.Fatalf("DefaultPath(%q) error = %v", agent, err)
+		}
+		if got != want {
+			t.Errorf("DefaultPath(%q) = %q, want %q", agent, got, want)
+		}
 	}
 }
 
@@ -98,6 +124,260 @@ func TestInstallAddsCodexHooks(t *testing.T) {
 	}
 	if len(got.Hooks["PermissionRequest"]) != 1 {
 		t.Fatalf("PermissionRequest hook count = %d, want 1", len(got.Hooks["PermissionRequest"]))
+	}
+}
+
+func TestInstallAddsGeminiTurnCompleteHook(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".gemini", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"theme":"dark","hooks":{"BeforeTool":[{"hooks":[{"type":"command","command":"existing"}]}]}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	changed, err := hooks.Install("gemini", path, "/opt/bin/vibe-pushover", "")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var got struct {
+		Hooks map[string][]json.RawMessage `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if len(got.Hooks["AfterAgent"]) != 1 {
+		t.Fatalf("AfterAgent hook count = %d, want 1", len(got.Hooks["AfterAgent"]))
+	}
+	if len(got.Hooks["BeforeTool"]) != 1 || !bytes.Contains(data, []byte(`"theme": "dark"`)) {
+		t.Fatalf("Gemini install did not preserve sibling config: %s", data)
+	}
+	if bytes.Contains(data, []byte("PermissionRequest")) {
+		t.Fatalf("Gemini config contains an unsupported permission hook: %s", data)
+	}
+	if bytes.Contains(data, []byte(`"async"`)) {
+		t.Fatalf("Gemini config contains a Claude-specific async field: %s", data)
+	}
+	changed, err = hooks.Install("gemini", path, "/opt/bin/vibe-pushover", "")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed Gemini hooks")
+	}
+}
+
+func TestInstallAddsDroidCompletionAndAttentionHooks(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".factory", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"model":"fast","hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"existing"}]}]}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := hooks.Install("droid", path, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var got struct {
+		Hooks map[string][]json.RawMessage `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if len(got.Hooks["Stop"]) != 1 || len(got.Hooks["Notification"]) != 1 {
+		t.Fatalf("hooks = %#v, want Stop and Notification", got.Hooks)
+	}
+	if len(got.Hooks["PreToolUse"]) != 1 || !bytes.Contains(data, []byte(`"model": "fast"`)) {
+		t.Fatalf("Droid install did not preserve sibling config: %s", data)
+	}
+	if !bytes.Contains(data, []byte("--agent droid --event attention-required")) {
+		t.Fatalf("Notification hook is not wired to attention-required: %s", data)
+	}
+	if bytes.Contains(data, []byte(`"async"`)) {
+		t.Fatalf("Droid config contains a Claude-specific async field: %s", data)
+	}
+	changed, err := hooks.Install("droid", path, "/opt/bin/vibe-pushover", "")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed Droid hooks")
+	}
+}
+
+func TestInstallAddsCopilotPersonalHooks(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".copilot", "hooks", "vibe-pushover.json")
+	if _, err := hooks.Install("copilot", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json"); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var got struct {
+		Version int                         `json:"version"`
+		Hooks   map[string][]map[string]any `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if got.Version != 1 || len(got.Hooks["agentStop"]) != 1 || len(got.Hooks["notification"]) != 1 {
+		t.Fatalf("Copilot manifest = %#v", got)
+	}
+	for _, event := range []string{"agentStop", "notification"} {
+		if got.Hooks[event][0]["type"] != "command" || got.Hooks[event][0]["timeoutSec"] != float64(10) {
+			t.Fatalf("%s hook = %#v", event, got.Hooks[event][0])
+		}
+	}
+	if got.Hooks["notification"][0]["matcher"] != "permission_prompt|elicitation_dialog" {
+		t.Fatalf("notification matcher = %#v", got.Hooks["notification"][0]["matcher"])
+	}
+	if !bytes.Contains(data, []byte("--event attention-required")) {
+		t.Fatalf("Copilot attention hook is not wired correctly: %s", data)
+	}
+	if !bytes.Contains(data, []byte("--config '/tmp/pushover.json'")) {
+		t.Fatalf("Copilot hooks do not use custom config: %s", data)
+	}
+	changed, err := hooks.Install("copilot", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed Copilot hooks")
+	}
+}
+
+func TestInstallCreatesGooseOpenPlugin(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".agents", "plugins", "vibe-pushover")
+	if _, err := hooks.Install("goose", path, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	manifest, err := os.ReadFile(filepath.Join(path, "plugin.json"))
+	if err != nil {
+		t.Fatalf("ReadFile(plugin.json) error = %v", err)
+	}
+	if !bytes.Contains(manifest, []byte(`"name": "vibe-pushover"`)) {
+		t.Fatalf("unexpected Goose plugin manifest: %s", manifest)
+	}
+	hookData, err := os.ReadFile(filepath.Join(path, "hooks", "hooks.json"))
+	if err != nil {
+		t.Fatalf("ReadFile(hooks.json) error = %v", err)
+	}
+	if !bytes.Contains(hookData, []byte(`"Stop"`)) || !bytes.Contains(hookData, []byte("--agent goose --event turn-complete")) {
+		t.Fatalf("unexpected Goose hooks: %s", hookData)
+	}
+	changed, err := hooks.Install("goose", path, "/opt/bin/vibe-pushover", "")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed Goose plugin")
+	}
+}
+
+func TestInstallGooseDoesNotWriteManifestWhenHooksAreInvalid(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".agents", "plugins", "vibe-pushover")
+	hooksPath := filepath.Join(path, "hooks", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(hooksPath, []byte(`{"hooks":`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := hooks.Install("goose", path, "/opt/bin/vibe-pushover", ""); err == nil {
+		t.Fatal("Install() accepted invalid Goose hooks")
+	}
+	if _, err := os.Stat(filepath.Join(path, "plugin.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("plugin manifest exists after failed install: %v", err)
+	}
+}
+
+func TestInstallCreatesOpenCodePlugin(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "opencode", "plugins", "vibe-pushover.ts")
+	if _, err := hooks.Install("opencode", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json"); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	for _, want := range []string{
+		`event.type === "session.idle"`,
+		`event.type === "permission.asked"`,
+		`"--agent", "opencode"`,
+		`"--config", configPath`,
+	} {
+		if !bytes.Contains(data, []byte(want)) {
+			t.Fatalf("OpenCode plugin does not contain %q:\n%s", want, data)
+		}
+	}
+	changed, err := hooks.Install("opencode", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed OpenCode plugin")
+	}
+}
+
+func TestInstallAddsCursorStopHook(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".cursor", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"version":1,"hooks":{"afterFileEdit":[{"command":"existing"}]}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := hooks.Install("cursor", path, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var got struct {
+		Version int                         `json:"version"`
+		Hooks   map[string][]map[string]any `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if got.Version != 1 || len(got.Hooks["stop"]) != 1 || len(got.Hooks["afterFileEdit"]) != 1 {
+		t.Fatalf("Cursor config = %#v", got)
+	}
+	if got.Hooks["stop"][0]["command"] != "'/opt/bin/vibe-pushover' notify --agent cursor --event turn-complete --ignore-errors" {
+		t.Fatalf("Cursor stop hook = %#v", got.Hooks["stop"][0])
+	}
+	changed, err := hooks.Install("cursor", path, "/opt/bin/vibe-pushover", "")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed Cursor hooks")
 	}
 }
 

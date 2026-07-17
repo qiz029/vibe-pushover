@@ -11,11 +11,41 @@ import (
 	"strings"
 )
 
+type AgentInfo struct {
+	Name         string
+	DisplayName  string
+	Capabilities string
+	Resource     string
+}
+
+var agentCatalog = []AgentInfo{
+	{Name: "claude", DisplayName: "Claude Code", Capabilities: "completion+approval", Resource: "hooks"},
+	{Name: "codex", DisplayName: "Codex CLI", Capabilities: "completion+approval", Resource: "hooks"},
+	{Name: "copilot", DisplayName: "GitHub Copilot CLI", Capabilities: "completion+attention", Resource: "hooks"},
+	{Name: "cursor", DisplayName: "Cursor", Capabilities: "completion only", Resource: "hooks"},
+	{Name: "droid", DisplayName: "Factory Droid", Capabilities: "completion+attention", Resource: "hooks"},
+	{Name: "gemini", DisplayName: "Gemini CLI", Capabilities: "completion only", Resource: "hooks"},
+	{Name: "goose", DisplayName: "Goose", Capabilities: "completion only", Resource: "plugin"},
+	{Name: "kimi", DisplayName: "Kimi Code CLI", Capabilities: "completion+approval", Resource: "hooks"},
+	{Name: "opencode", DisplayName: "OpenCode", Capabilities: "completion+approval", Resource: "plugin"},
+	{Name: "pi", DisplayName: "Pi", Capabilities: "completion only", Resource: "extension"},
+}
+
+func Agents() []AgentInfo {
+	return append([]AgentInfo(nil), agentCatalog...)
+}
+
 var supportedAgents = map[string]struct{}{
-	"claude": {},
-	"codex":  {},
-	"kimi":   {},
-	"pi":     {},
+	"claude":   {},
+	"codex":    {},
+	"copilot":  {},
+	"cursor":   {},
+	"droid":    {},
+	"gemini":   {},
+	"goose":    {},
+	"kimi":     {},
+	"opencode": {},
+	"pi":       {},
 }
 
 type hookCommand struct {
@@ -30,6 +60,24 @@ type hookGroup struct {
 }
 
 func DefaultPath(agent string) (string, error) {
+	if agent == "copilot" {
+		if configHome := os.Getenv("COPILOT_HOME"); configHome != "" {
+			configHome, err := expandHome(configHome)
+			if err != nil {
+				return "", fmt.Errorf("resolve Copilot home: %w", err)
+			}
+			return filepath.Join(configHome, "hooks", "vibe-pushover.json"), nil
+		}
+	}
+	if agent == "gemini" {
+		if configHome := os.Getenv("GEMINI_CLI_HOME"); configHome != "" {
+			configHome, err := expandHome(configHome)
+			if err != nil {
+				return "", fmt.Errorf("resolve Gemini CLI home: %w", err)
+			}
+			return filepath.Join(configHome, ".gemini", "settings.json"), nil
+		}
+	}
 	if agent == "kimi" {
 		if dataDir := os.Getenv("KIMI_CODE_HOME"); dataDir != "" {
 			dataDir, err := expandHome(dataDir)
@@ -56,14 +104,35 @@ func DefaultPath(agent string) (string, error) {
 	switch agent {
 	case "codex":
 		return filepath.Join(home, ".codex", "hooks.json"), nil
+	case "copilot":
+		return filepath.Join(home, ".copilot", "hooks", "vibe-pushover.json"), nil
 	case "claude":
 		return filepath.Join(home, ".claude", "settings.json"), nil
+	case "cursor":
+		return filepath.Join(home, ".cursor", "hooks.json"), nil
+	case "droid":
+		return filepath.Join(home, ".factory", "settings.json"), nil
+	case "gemini":
+		return filepath.Join(home, ".gemini", "settings.json"), nil
+	case "goose":
+		return filepath.Join(home, ".agents", "plugins", "vibe-pushover"), nil
 	case "kimi":
 		return filepath.Join(home, ".kimi-code", "config.toml"), nil
+	case "opencode":
+		configDir := os.Getenv("XDG_CONFIG_HOME")
+		if configDir == "" {
+			configDir = filepath.Join(home, ".config")
+		} else {
+			configDir, err = expandHome(configDir)
+			if err != nil {
+				return "", fmt.Errorf("resolve XDG config home: %w", err)
+			}
+		}
+		return filepath.Join(configDir, "opencode", "plugins", "vibe-pushover.ts"), nil
 	case "pi":
 		return filepath.Join(home, ".pi", "agent", "extensions", "vibe-pushover", "index.ts"), nil
 	default:
-		return "", fmt.Errorf("unsupported agent %q (supported: codex, claude, kimi, pi)", agent)
+		return "", fmt.Errorf("unsupported agent %q (supported: claude, codex, copilot, cursor, droid, gemini, goose, kimi, opencode, pi)", agent)
 	}
 }
 
@@ -83,13 +152,25 @@ func expandHome(path string) (string, error) {
 
 func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	if _, ok := supportedAgents[agent]; !ok {
-		return false, fmt.Errorf("unsupported agent %q (supported: codex, claude, kimi, pi)", agent)
+		return false, fmt.Errorf("unsupported agent %q (supported: claude, codex, copilot, cursor, droid, gemini, goose, kimi, opencode, pi)", agent)
 	}
 	if strings.TrimSpace(executable) == "" {
 		return false, errors.New("executable path is required")
 	}
 	if agent == "pi" {
 		return installPiExtension(path, executable, pushoverConfig)
+	}
+	if agent == "copilot" {
+		return installCopilotHooks(path, executable, pushoverConfig)
+	}
+	if agent == "cursor" {
+		return installCursorHooks(path, executable, pushoverConfig)
+	}
+	if agent == "goose" {
+		return installGoosePlugin(path, executable, pushoverConfig)
+	}
+	if agent == "opencode" {
+		return installOpenCodePlugin(path, executable, pushoverConfig)
 	}
 	if agent == "kimi" {
 		return installKimiHooks(path, executable, pushoverConfig)
@@ -109,11 +190,20 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 		return false, errors.New("agent config field \"hooks\" must be an object")
 	}
 
-	changed := false
-	for hookName, event := range map[string]string{
+	events := map[string]string{
 		"Stop":              "turn-complete",
 		"PermissionRequest": "approval-required",
-	} {
+	}
+	if agent == "gemini" {
+		events = map[string]string{"AfterAgent": "turn-complete"}
+	} else if agent == "droid" {
+		events = map[string]string{
+			"Stop":         "turn-complete",
+			"Notification": "attention-required",
+		}
+	}
+	changed := false
+	for hookName, event := range events {
 		command := shellQuote(executable) + " notify --agent " + agent + " --event " + event + " --ignore-errors"
 		if pushoverConfig != "" {
 			command += " --config " + shellQuote(pushoverConfig)
@@ -122,7 +212,7 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 			Type:    "command",
 			Command: command,
 			Timeout: 10,
-			Async:   true,
+			Async:   agent == "claude" || agent == "codex",
 		}}}
 		updated, entryChanged, err := upsert(hookMap[hookName], agent, event, entry)
 		if err != nil {
@@ -203,7 +293,11 @@ func upsert(value any, agent, event string, want hookGroup) ([]any, bool, error)
 			command["type"] = wanted.Type
 			command["command"] = wanted.Command
 			command["timeout"] = wanted.Timeout
-			command["async"] = wanted.Async
+			if wanted.Async {
+				command["async"] = true
+			} else {
+				delete(command, "async")
+			}
 			commands[commandIndex] = command
 			group["hooks"] = commands
 			entries[i] = group

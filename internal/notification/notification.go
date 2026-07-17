@@ -11,8 +11,9 @@ import (
 type Event string
 
 const (
-	EventTurnComplete     Event = "turn-complete"
-	EventApprovalRequired Event = "approval-required"
+	EventTurnComplete      Event = "turn-complete"
+	EventApprovalRequired  Event = "approval-required"
+	EventAttentionRequired Event = "attention-required"
 )
 
 type Message struct {
@@ -21,6 +22,25 @@ type Message struct {
 	Priority int
 	Sound    string
 	TTL      int
+}
+
+func ApplyProfile(message Message, event Event, profile string) (Message, error) {
+	switch profile {
+	case "", "balanced":
+		return message, nil
+	case "quiet":
+		message.Priority = 0
+		message.Sound = "none"
+		return message, nil
+	case "watch":
+		if event == EventTurnComplete {
+			message.Priority = 0
+			message.Sound = "pushover"
+		}
+		return message, nil
+	default:
+		return Message{}, fmt.Errorf("unknown notification profile %q", profile)
+	}
 }
 
 func Build(agent string, event Event, payload map[string]any) (Message, error) {
@@ -33,7 +53,7 @@ func Build(agent string, event Event, payload map[string]any) (Message, error) {
 	switch event {
 	case EventTurnComplete:
 		body := "Turn completed."
-		if detail := firstLine(firstString(payload, "last_assistant_message", "message", "reason")); detail != "" {
+		if detail := firstLine(firstString(payload, "last_assistant_message", "prompt_response", "message", "reason")); detail != "" {
 			body = detail
 		}
 		return Message{
@@ -55,8 +75,20 @@ func Build(agent string, event Event, payload map[string]any) (Message, error) {
 			Sound:    "persistent",
 			TTL:      1800,
 		}, nil
+	case EventAttentionRequired:
+		body := "Agent needs your attention."
+		if detail := firstLine(firstString(payload, "message", "reason", "title")); detail != "" {
+			body = detail
+		}
+		return Message{
+			Title:    truncate(fmt.Sprintf("⚠ %s needs attention%s", displayName(agent), titleProjectSuffix(project)), 250),
+			Body:     truncate(body, 300),
+			Priority: 1,
+			Sound:    "persistent",
+			TTL:      1800,
+		}, nil
 	default:
-		return Message{}, errors.New("event must be turn-complete or approval-required")
+		return Message{}, errors.New("event must be turn-complete, approval-required, or attention-required")
 	}
 }
 
@@ -85,8 +117,12 @@ func titleProjectSuffix(project string) string {
 }
 
 func approvalDetail(payload map[string]any) string {
-	tool := stringValue(payload, "tool_name")
-	if input, ok := payload["tool_input"].(map[string]any); ok {
+	tool := firstString(payload, "tool_name", "toolName")
+	input, _ := payload["tool_input"].(map[string]any)
+	if input == nil {
+		input, _ = payload["toolArgs"].(map[string]any)
+	}
+	if input != nil {
 		if command := stringValue(input, "command"); command != "" {
 			if tool != "" {
 				return tool + "\n" + command

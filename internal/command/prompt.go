@@ -66,3 +66,29 @@ func (p *secretPrompter) readSecret(label string) (string, error) {
 	}
 	return value, nil
 }
+
+func (p *secretPrompter) readChoice(label, defaultValue string, choices ...string) (string, error) {
+	allowed := make(map[string]struct{}, len(choices))
+	for _, choice := range choices {
+		allowed[choice] = struct{}{}
+	}
+	for {
+		if _, err := fmt.Fprint(p.output, label); err != nil {
+			return "", err
+		}
+		value, err := p.buffered.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return "", fmt.Errorf("read choice: %w", err)
+		}
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			return defaultValue, nil
+		}
+		if _, ok := allowed[value]; ok {
+			return value, nil
+		}
+		if _, err := fmt.Fprintf(p.output, "Choose one of: %s.\n", strings.Join(choices, ", ")); err != nil {
+			return "", err
+		}
+	}
+}

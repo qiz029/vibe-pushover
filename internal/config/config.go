@@ -9,8 +9,9 @@ import (
 )
 
 type Credentials struct {
-	AppToken string `json:"app_token"`
-	UserKey  string `json:"user_key"`
+	AppToken            string `json:"app_token"`
+	UserKey             string `json:"user_key"`
+	NotificationProfile string `json:"notification_profile,omitempty"`
 }
 
 func DefaultPath() (string, error) {
@@ -81,6 +82,11 @@ func (c Credentials) Validate() error {
 	}
 	if c.UserKey == "" {
 		return errors.New("user key is required")
+	}
+	switch c.NotificationProfile {
+	case "", "balanced", "quiet", "watch":
+	default:
+		return fmt.Errorf("notification profile must be balanced, quiet, or watch, got %q", c.NotificationProfile)
 	}
 	return nil
 }

@@ -80,12 +80,28 @@ func TestBuildApprovalNotification(t *testing.T) {
 	}
 }
 
+func TestBuildApprovalNotificationAcceptsCamelCasePayload(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("copilot", notification.EventApprovalRequired, map[string]any{
+		"toolName": "bash",
+		"toolArgs": map[string]any{"command": "git push origin main"},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Body != "bash\ngit push origin main" {
+		t.Fatalf("Body = %q", got.Body)
+	}
+}
+
 func TestBuildNotificationsAlwaysHaveABody(t *testing.T) {
 	t.Parallel()
 
 	for _, event := range []notification.Event{
 		notification.EventTurnComplete,
 		notification.EventApprovalRequired,
+		notification.EventAttentionRequired,
 	} {
 		got, err := notification.Build("codex", event, nil)
 		if err != nil {
@@ -94,5 +110,65 @@ func TestBuildNotificationsAlwaysHaveABody(t *testing.T) {
 		if strings.TrimSpace(got.Body) == "" {
 			t.Fatalf("Build(%q) returned an empty body", event)
 		}
+	}
+}
+
+func TestBuildAttentionNotification(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("droid", notification.EventAttentionRequired, map[string]any{
+		"cwd": "/tmp/demo", "message": "Droid is waiting for your input",
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Title != "⚠ Droid needs attention · demo" || got.Body != "Droid is waiting for your input" {
+		t.Fatalf("attention notification = %#v", got)
+	}
+}
+
+func TestBuildGeminiCompletionUsesPromptResponse(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("gemini", notification.EventTurnComplete, map[string]any{
+		"prompt_response": "Implemented support for Gemini CLI.\nTests pass.",
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Body != "Implemented support for Gemini CLI." {
+		t.Fatalf("Body = %q", got.Body)
+	}
+}
+
+func TestApplyQuietProfileSilencesApproval(t *testing.T) {
+	t.Parallel()
+
+	message, err := notification.Build("codex", notification.EventApprovalRequired, nil)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	got, err := notification.ApplyProfile(message, notification.EventApprovalRequired, "quiet")
+	if err != nil {
+		t.Fatalf("ApplyProfile() error = %v", err)
+	}
+	if got.Priority != 0 || got.Sound != "none" {
+		t.Fatalf("quiet approval style = priority %d, sound %q", got.Priority, got.Sound)
+	}
+}
+
+func TestApplyWatchProfileMakesCompletionNoticeable(t *testing.T) {
+	t.Parallel()
+
+	message, err := notification.Build("codex", notification.EventTurnComplete, nil)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	got, err := notification.ApplyProfile(message, notification.EventTurnComplete, "watch")
+	if err != nil {
+		t.Fatalf("ApplyProfile() error = %v", err)
+	}
+	if got.Priority != 0 || got.Sound != "pushover" {
+		t.Fatalf("watch completion style = priority %d, sound %q", got.Priority, got.Sound)
 	}
 }
