@@ -109,7 +109,7 @@ func Build(agent string, event Event, payload map[string]any) (Message, error) {
 	if agent == "" {
 		agent = "agent"
 	}
-	project := projectName(payloadWorkingDirectory(payload))
+	project := projectName(payloadProjectDirectory(payload))
 
 	switch event {
 	case EventTurnComplete:
@@ -234,7 +234,7 @@ func attentionDetail(agent string, payload map[string]any) string {
 }
 
 func ProjectName(payload map[string]any) string {
-	return projectName(payloadWorkingDirectory(payload))
+	return projectName(payloadProjectDirectory(payload))
 }
 
 func withSupplementaryAction(message Message, event Event, payload map[string]any) Message {
@@ -327,33 +327,56 @@ func completionLine(value string) string {
 	return fallback
 }
 
-func payloadWorkingDirectory(payload map[string]any) string {
-	if cwd := stringValue(payload, "cwd"); cwd != "" {
-		return cwd
+func payloadProjectDirectory(payload map[string]any) string {
+	cwd := firstString(payload, "cwd", "working_dir", "workingDir")
+	roots := payloadWorkspaceRoots(payload)
+	if cwd != "" {
+		best := ""
+		for _, root := range roots {
+			if pathContains(root, cwd) && len(root) > len(best) {
+				best = root
+			}
+		}
+		if best != "" {
+			return best
+		}
 	}
-	if workingDir := firstString(payload, "working_dir", "workingDir"); workingDir != "" {
-		return workingDir
+	if len(roots) > 0 {
+		return roots[0]
 	}
+	return cwd
+}
+
+func payloadWorkspaceRoots(payload map[string]any) []string {
+	roots := make([]string, 0, 2)
 	if workspace := firstString(payload, "workspaceRoot", "workspace_root", "workspace"); workspace != "" {
-		return workspace
+		roots = append(roots, workspace)
 	}
 	for _, key := range []string{"workspace_roots", "workspaceRoots", "workspacePaths"} {
-		if roots, ok := payload[key].([]any); ok && len(roots) > 0 {
-			for _, raw := range roots {
+		if rawRoots, ok := payload[key].([]any); ok && len(rawRoots) > 0 {
+			for _, raw := range rawRoots {
 				if root, ok := raw.(string); ok && strings.TrimSpace(root) != "" {
-					return strings.TrimSpace(root)
+					roots = append(roots, strings.TrimSpace(root))
 				}
 			}
 		}
-		if roots, ok := payload[key].([]string); ok && len(roots) > 0 {
-			for _, root := range roots {
+		if rawRoots, ok := payload[key].([]string); ok && len(rawRoots) > 0 {
+			for _, root := range rawRoots {
 				if strings.TrimSpace(root) != "" {
-					return strings.TrimSpace(root)
+					roots = append(roots, strings.TrimSpace(root))
 				}
 			}
 		}
 	}
-	return ""
+	return roots
+}
+
+func pathContains(root, path string) bool {
+	relative, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	if err != nil || filepath.IsAbs(relative) {
+		return false
+	}
+	return relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)))
 }
 
 func lastContentLine(value string) string {

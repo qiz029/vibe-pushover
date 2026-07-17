@@ -653,6 +653,41 @@ func TestBuildUsesFirstNonEmptyWorkspaceRoot(t *testing.T) {
 	}
 }
 
+func TestBuildUsesContainingWorkspaceRootForProject(t *testing.T) {
+	t.Parallel()
+
+	payload := map[string]any{
+		"cwd":           "/tmp/vibe-pushover/internal/notification",
+		"workspaceRoot": "/tmp/vibe-pushover",
+	}
+	got, err := notification.Build("codex", notification.EventTurnComplete, payload)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Title != "✓ Codex finished · vibe-pushover" {
+		t.Fatalf("Title = %q, want workspace project", got.Title)
+	}
+	if project := notification.ProjectName(payload); project != "vibe-pushover" {
+		t.Fatalf("ProjectName() = %q, want workspace project", project)
+	}
+}
+
+func TestBuildChoosesWorkspaceRootContainingCurrentDirectory(t *testing.T) {
+	t.Parallel()
+
+	payload := map[string]any{
+		"cwd":             "/tmp/backend/internal/command",
+		"workspace_roots": []any{"/tmp/frontend", "/tmp/backend"},
+	}
+	got, err := notification.Build("codex", notification.EventTurnComplete, payload)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Title != "✓ Codex finished · backend" {
+		t.Fatalf("Title = %q, want matching workspace project", got.Title)
+	}
+}
+
 func TestBuildDetectsSharedCopilotAndVSCodeSource(t *testing.T) {
 	t.Parallel()
 
