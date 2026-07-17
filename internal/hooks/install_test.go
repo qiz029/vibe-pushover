@@ -275,7 +275,7 @@ func TestDetectedAgentsFindsAdditionalOfficialCLICommands(t *testing.T) {
 
 func TestDetectedRunAgentsFindsWrapperCLIs(t *testing.T) {
 	binDir := t.TempDir()
-	for _, name := range []string{"cn", "crush", "pdx"} {
+	for _, name := range []string{"cn", "crush", "duo", "mini", "pdx"} {
 		path := filepath.Join(binDir, name)
 		if runtime.GOOS == "windows" {
 			path += ".exe"
@@ -294,9 +294,28 @@ func TestDetectedRunAgentsFindsWrapperCLIs(t *testing.T) {
 	for _, agent := range detected {
 		got = append(got, agent.Name)
 	}
-	want := []string{"continue", "crush", "plandex"}
+	want := []string{"continue", "crush", "gitlab-duo", "mini-swe-agent", "plandex"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("DetectedRunAgents() = %#v, want %#v", got, want)
+	}
+}
+
+func TestDetectedRunAgentsDoesNotInferDuoFromGenericGitLabCLI(t *testing.T) {
+	binDir := t.TempDir()
+	executable := filepath.Join(binDir, "glab")
+	if runtime.GOOS == "windows" {
+		executable += ".exe"
+		t.Setenv("PATHEXT", ".EXE")
+	}
+	if err := os.WriteFile(executable, nil, 0o755); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", executable, err)
+	}
+	t.Setenv("PATH", binDir)
+
+	for _, agent := range hooks.DetectedRunAgents() {
+		if agent.Name == "gitlab-duo" {
+			t.Fatal("generic glab executable was treated as a GitLab Duo installation")
+		}
 	}
 }
 

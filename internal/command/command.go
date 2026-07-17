@@ -106,10 +106,10 @@ func runCommand(options Options) *cli.Command {
 			}
 
 			event := notification.EventTurnComplete
-			message := fmt.Sprintf("%s finished in %s", filepath.Base(argv[0]), compactDuration(elapsed))
+			message := fmt.Sprintf("Completed · %s", compactDuration(elapsed))
 			if runErr != nil {
 				event = notification.EventAttentionRequired
-				message = fmt.Sprintf("%s exited with status %d after %s", filepath.Base(argv[0]), processExitCode(runErr), compactDuration(elapsed))
+				message = fmt.Sprintf("Failed · exit %d · %s", processExitCode(runErr), compactDuration(elapsed))
 			}
 			cwd, _ := os.Getwd()
 			payload := map[string]any{
@@ -921,11 +921,11 @@ func agentsCommand(options Options) *cli.Command {
 				agents = append(agents, hooks.RunAgents()...)
 			}
 			sort.Slice(agents, func(i, j int) bool { return agents[i].Name < agents[j].Name })
-			if _, err := fmt.Fprintln(options.Stdout, "AGENT      CAPABILITIES                    INTEGRATION"); err != nil {
+			if _, err := fmt.Fprintf(options.Stdout, "%-15s %-40s %s\n", "AGENT", "CAPABILITIES", "INTEGRATION"); err != nil {
 				return err
 			}
 			for _, agent := range agents {
-				if _, err := fmt.Fprintf(options.Stdout, "%-10s %-31s %s (%s)\n", agent.Name, agent.Capabilities, agent.DisplayName, agent.Resource); err != nil {
+				if _, err := fmt.Fprintf(options.Stdout, "%-15s %-40s %s (%s)\n", agent.Name, agent.Capabilities, agent.DisplayName, agent.Resource); err != nil {
 					return err
 				}
 			}
@@ -1175,11 +1175,15 @@ func printRunWrapperDetection(stdout io.Writer, agents []hooks.AgentInfo) error 
 
 func installAgent(stdout io.Writer, agent, agentConfig, executable, pushoverConfig string) error {
 	if hooks.IsRunAgent(agent) {
-		commandName := agent
-		if agent == "continue" {
-			commandName = "cn"
+		invocations, ok := hooks.RunAgentInvocations(agent)
+		if !ok {
+			return fmt.Errorf("%s run wrapper has no canonical command", agent)
 		}
-		return fmt.Errorf("%s uses the run wrapper instead of an installed hook; use: vibe-pushover run --agent %s -- %s", agent, agent, commandName)
+		examples := make([]string, 0, len(invocations))
+		for _, invocation := range invocations {
+			examples = append(examples, fmt.Sprintf("vibe-pushover run --agent %s -- %s", agent, invocation))
+		}
+		return fmt.Errorf("%s uses the run wrapper instead of an installed hook; use: %s", agent, strings.Join(examples, " or "))
 	}
 	paths := []string{agentConfig}
 	if paths[0] == "" {

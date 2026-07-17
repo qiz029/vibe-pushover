@@ -66,6 +66,8 @@ var agentCatalog = []AgentInfo{
 var runAgentCatalog = []AgentInfo{
 	{Name: "continue", DisplayName: "Continue CLI", Capabilities: "session exit+failure", Resource: "run wrapper"},
 	{Name: "crush", DisplayName: "Crush", Capabilities: "session exit+failure", Resource: "run wrapper"},
+	{Name: "gitlab-duo", DisplayName: "GitLab Duo CLI", Capabilities: "session exit+failure", Resource: "run wrapper"},
+	{Name: "mini-swe-agent", DisplayName: "mini-SWE-agent", Capabilities: "session exit+failure", Resource: "run wrapper"},
 	{Name: "plandex", DisplayName: "Plandex", Capabilities: "session exit+failure", Resource: "run wrapper"},
 }
 
@@ -86,6 +88,20 @@ func IsRunAgent(name string) bool {
 		}
 	}
 	return false
+}
+
+// RunAgentInvocations returns supported command forms shown in wrapper
+// guidance. The first form is the standalone executable used for detection.
+func RunAgentInvocations(name string) ([]string, bool) {
+	commands, ok := runDetectionExecutables[name]
+	if !ok || len(commands) == 0 {
+		return nil, false
+	}
+	invocations := []string{commands[0]}
+	if name == "gitlab-duo" {
+		invocations = append(invocations, "glab duo cli")
+	}
+	return invocations, true
 }
 
 type hookCommand struct {

@@ -35,9 +35,11 @@ var detectionExecutables = map[string][]string{
 }
 
 var runDetectionExecutables = map[string][]string{
-	"continue": {"cn"},
-	"crush":    {"crush"},
-	"plandex":  {"plandex", "pdx"},
+	"continue":       {"cn"},
+	"crush":          {"crush"},
+	"gitlab-duo":     {"duo"},
+	"mini-swe-agent": {"mini"},
+	"plandex":        {"plandex", "pdx"},
 }
 
 // DetectedRunAgents returns process-wrapper agents with a known CLI on PATH.

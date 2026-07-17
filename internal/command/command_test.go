@@ -2244,12 +2244,15 @@ func TestAgentsCommandShowsCapabilities(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"aider", "amp", "antigravity", "autohand", "auggie", "claude", "claude-router", "cline", "codebuddy", "codewhale", "codex", "continue", "copilot", "craft", "crush", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "junie", "kimi", "kiro", "mimo", "mistral", "omp", "openhands", "opencode", "pi", "plandex", "qoder", "qwen", "rovo", "tabnine", "trae", "vscode", "windsurf", "workbuddy", "zcode",
+		"aider", "amp", "antigravity", "autohand", "auggie", "claude", "claude-router", "cline", "codebuddy", "codewhale", "codex", "continue", "copilot", "craft", "crush", "cortex", "cursor", "droid", "gemini", "gitlab-duo", "goose", "grok", "hermes", "junie", "kimi", "kiro", "mimo", "mini-swe-agent", "mistral", "omp", "openhands", "opencode", "pi", "plandex", "qoder", "qwen", "rovo", "tabnine", "trae", "vscode", "windsurf", "workbuddy", "zcode",
 		"completion+approval", "completion+approval+attention", "completion+attention", "completion only", "session exit+failure", "run wrapper",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("agents output does not contain %q:\n%s", want, output)
 		}
+	}
+	if !strings.Contains(output, "AGENT           CAPABILITIES") || !strings.Contains(output, "mini-swe-agent  session exit+failure") {
+		t.Fatalf("agents output columns are not aligned for long wrapper names:\n%s", output)
 	}
 }
 
@@ -3983,8 +3986,8 @@ func TestRunCommandNotifiesAfterLongSuccessfulAgentSession(t *testing.T) {
 	if !strings.Contains(received["title"], "Continue finished") {
 		t.Fatalf("title = %q, want Continue completion", received["title"])
 	}
-	if received["message"] != "cn finished in 45s" {
-		t.Fatalf("message = %q, want compact duration", received["message"])
+	if received["message"] != "Completed · 45s" {
+		t.Fatalf("message = %q, want scan-friendly completion duration", received["message"])
 	}
 	if received["priority"] != "-1" || received["sound"] != "none" {
 		t.Fatalf("delivery = priority %q sound %q, want quiet completion", received["priority"], received["sound"])
@@ -4090,8 +4093,8 @@ func TestRunCommandAlwaysNotifiesFailureAndPreservesExitCode(t *testing.T) {
 	if !strings.Contains(received["title"], "Crush needs attention") {
 		t.Fatalf("title = %q, want Crush attention", received["title"])
 	}
-	if received["message"] != "crush exited with status 17 after 2s" {
-		t.Fatalf("message = %q, want compact failure status", received["message"])
+	if received["message"] != "Failed · exit 17 · 2s" {
+		t.Fatalf("message = %q, want scan-friendly failure status", received["message"])
 	}
 	if received["priority"] != "1" || received["sound"] != "persistent" {
 		t.Fatalf("delivery = priority %q sound %q, want actionable attention", received["priority"], received["sound"])
@@ -4152,17 +4155,33 @@ func TestRunCommandMapsPermissionDeniedStartTo126(t *testing.T) {
 func TestInstallCommandGuidesRunWrapperAgents(t *testing.T) {
 	t.Parallel()
 
-	app := command.New(command.Options{
-		Stdin:      &bytes.Buffer{},
-		Stdout:     &bytes.Buffer{},
-		Stderr:     &bytes.Buffer{},
-		Executable: "/opt/bin/vibe-pushover",
-	})
-	err := app.Run(context.Background(), []string{
-		"vibe-pushover", "install", "--agent", "continue",
-	})
-	if err == nil || !strings.Contains(err.Error(), "uses the run wrapper") || !strings.Contains(err.Error(), "vibe-pushover run --agent continue -- cn") {
-		t.Fatalf("Run() error = %v, want run wrapper guidance", err)
+	for agent, executable := range map[string]string{
+		"continue":       "cn",
+		"crush":          "crush",
+		"gitlab-duo":     "duo",
+		"mini-swe-agent": "mini",
+		"plandex":        "plandex",
+	} {
+		agent, executable := agent, executable
+		t.Run(agent, func(t *testing.T) {
+			t.Parallel()
+			app := command.New(command.Options{
+				Stdin:      &bytes.Buffer{},
+				Stdout:     &bytes.Buffer{},
+				Stderr:     &bytes.Buffer{},
+				Executable: "/opt/bin/vibe-pushover",
+			})
+			err := app.Run(context.Background(), []string{
+				"vibe-pushover", "install", "--agent", agent,
+			})
+			want := "vibe-pushover run --agent " + agent + " -- " + executable
+			if err == nil || !strings.Contains(err.Error(), "uses the run wrapper") || !strings.Contains(err.Error(), want) {
+				t.Fatalf("Run() error = %v, want %q wrapper guidance", err, want)
+			}
+			if agent == "gitlab-duo" && !strings.Contains(err.Error(), "vibe-pushover run --agent gitlab-duo -- glab duo cli") {
+				t.Fatalf("Run() error = %v, want GitLab CLI alternative", err)
+			}
+		})
 	}
 }
 

@@ -656,19 +656,21 @@ func TestBuildUsesProductNamesInNotificationTitles(t *testing.T) {
 	t.Parallel()
 
 	for agent, want := range map[string]string{
-		"autohand":  "✓ Autohand Code finished · demo",
-		"craft":     "✓ Craft Agents finished · demo",
-		"cortex":    "✓ Cortex Code finished · demo",
-		"dotcraft":  "✓ DotCraft finished · demo",
-		"kilo":      "✓ Kilo Code finished · demo",
-		"mimo":      "✓ MiMo Code finished · demo",
-		"mistral":   "✓ Mistral Vibe finished · demo",
-		"omp":       "✓ Oh My Pi finished · demo",
-		"openhands": "✓ OpenHands finished · demo",
-		"opencode":  "✓ OpenCode finished · demo",
-		"qwen":      "✓ Qwen Code finished · demo",
-		"trae":      "✓ TRAE finished · demo",
-		"vscode":    "✓ VS Code finished · demo",
+		"autohand":       "✓ Autohand Code finished · demo",
+		"craft":          "✓ Craft Agents finished · demo",
+		"cortex":         "✓ Cortex Code finished · demo",
+		"dotcraft":       "✓ DotCraft finished · demo",
+		"gitlab-duo":     "✓ GitLab Duo finished · demo",
+		"kilo":           "✓ Kilo Code finished · demo",
+		"mimo":           "✓ MiMo Code finished · demo",
+		"mini-swe-agent": "✓ mini-SWE-agent finished · demo",
+		"mistral":        "✓ Mistral Vibe finished · demo",
+		"omp":            "✓ Oh My Pi finished · demo",
+		"openhands":      "✓ OpenHands finished · demo",
+		"opencode":       "✓ OpenCode finished · demo",
+		"qwen":           "✓ Qwen Code finished · demo",
+		"trae":           "✓ TRAE finished · demo",
+		"vscode":         "✓ VS Code finished · demo",
 	} {
 		got, err := notification.Build(agent, notification.EventTurnComplete, map[string]any{"cwd": "/tmp/demo"})
 		if err != nil {
