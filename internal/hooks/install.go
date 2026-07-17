@@ -41,6 +41,7 @@ var agentCatalog = []AgentInfo{
 	{Name: "gemini", DisplayName: "Gemini CLI", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "goose", DisplayName: "Goose", Capabilities: "completion only", Resource: "plugin"},
 	{Name: "grok", DisplayName: "Grok Build", Capabilities: "completion+attention", Resource: "hooks"},
+	{Name: "gptme", DisplayName: "gptme", Capabilities: "completion+approval", Resource: "plugin"},
 	{Name: "hermes", DisplayName: "Hermes Agent", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "junie", DisplayName: "JetBrains Junie CLI", Capabilities: "completion+approval+attention", Resource: "hooks (EAP)"},
 	{Name: "kimi", DisplayName: "Kimi Code CLI", Capabilities: "completion+approval", Resource: "hooks"},
@@ -317,6 +318,8 @@ func DefaultPath(agent string) (string, error) {
 		return filepath.Join(home, ".agents", "plugins", "vibe-pushover"), nil
 	case "grok":
 		return filepath.Join(home, ".grok", "hooks", "vibe-pushover.json"), nil
+	case "gptme":
+		return filepath.Join(home, ".config", "gptme", "config.toml"), nil
 	case "hermes":
 		return filepath.Join(home, ".hermes", "config.yaml"), nil
 	case "kimi":
@@ -483,6 +486,9 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	}
 	if agent == "goose" {
 		return installGoosePlugin(path, executable, pushoverConfig)
+	}
+	if agent == "gptme" {
+		return installGptmePlugin(path, executable, pushoverConfig)
 	}
 	if agent == "gajae" {
 		return installGajaeConfig(path, executable, pushoverConfig)

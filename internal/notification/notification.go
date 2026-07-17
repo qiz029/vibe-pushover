@@ -384,6 +384,7 @@ func displayName(value string) string {
 		"gajae":          "Gajae Code",
 		"gitlab-duo":     "GitLab Duo",
 		"grok":           "Grok Build",
+		"gptme":          "gptme",
 		"kilo":           "Kilo Code",
 		"mimo":           "MiMo Code",
 		"mini-swe-agent": "mini-SWE-agent",

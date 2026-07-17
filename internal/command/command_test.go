@@ -2244,7 +2244,7 @@ func TestAgentsCommandShowsCapabilities(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"aider", "amp", "antigravity", "autohand", "auggie", "claude", "claude-router", "cline", "codebuddy", "codewhale", "codex", "continue", "copilot", "craft", "crush", "cortex", "cursor", "droid", "gemini", "gitlab-duo", "goose", "grok", "hermes", "junie", "kimi", "kiro", "mimo", "mini-swe-agent", "mistral", "omp", "openhands", "opencode", "pi", "plandex", "qoder", "qwen", "rovo", "tabnine", "trae", "vscode", "windsurf", "workbuddy", "zcode",
+		"aider", "amp", "antigravity", "autohand", "auggie", "claude", "claude-router", "cline", "codebuddy", "codewhale", "codex", "continue", "copilot", "craft", "crush", "cortex", "cursor", "droid", "gemini", "gitlab-duo", "goose", "grok", "gptme", "hermes", "junie", "kimi", "kiro", "mimo", "mini-swe-agent", "mistral", "omp", "openhands", "opencode", "pi", "plandex", "qoder", "qwen", "rovo", "tabnine", "trae", "vscode", "windsurf", "workbuddy", "zcode",
 		"completion+approval", "completion+approval+attention", "completion+attention", "completion only", "session exit+failure", "run wrapper",
 	} {
 		if !strings.Contains(output, want) {
