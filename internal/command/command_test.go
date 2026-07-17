@@ -86,6 +86,25 @@ func TestSetupCommandStoresInteractiveNotificationProfile(t *testing.T) {
 	}
 }
 
+func TestSetupCommandStoresUrgentNotificationProfile(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	app := command.New(command.Options{
+		Stdin: bytes.NewBufferString("app-token\nuser-key\nurgent\n\n"), Stdout: &bytes.Buffer{},
+	})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "setup", "--config", path}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.NotificationProfile != "urgent" {
+		t.Fatalf("NotificationProfile = %q, want urgent", got.NotificationProfile)
+	}
+}
+
 func TestSetupCommandStoresInteractiveTargetDevices(t *testing.T) {
 	t.Parallel()
 
@@ -604,6 +623,79 @@ func TestNotifyCommandAppliesConfiguredNotificationProfile(t *testing.T) {
 	}
 }
 
+func TestNotifyCommandSuppressesCompletionForUrgentProfile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(path, []byte(`{"app_token":"app-token","user_key":"user-key","notification_profile":"urgent"}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	called := false
+	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		called = true
+		return nil, errors.New("unexpected Pushover request")
+	})}
+	app := command.New(command.Options{
+		Stdin: bytes.NewBufferString(`{"cwd":"/tmp/demo"}`), Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{},
+		HTTPClient: httpClient, Endpoint: "https://pushover.test/messages.json", DedupePath: filepath.Join(dir, "dedupe.json"),
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--config", path, "--agent", "codex", "--event", "turn-complete",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if called {
+		t.Fatal("notify sent a completion notification for urgent profile")
+	}
+}
+
+func TestNotifyCommandUrgentProfilePreservesActionableDelivery(t *testing.T) {
+	t.Parallel()
+
+	for _, event := range []string{"approval-required", "attention-required"} {
+		event := event
+		t.Run(event, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.json")
+			if err := config.Save(path, config.Credentials{
+				AppToken: "app-token", UserKey: "user-key", NotificationProfile: "urgent",
+			}); err != nil {
+				t.Fatalf("Save() error = %v", err)
+			}
+			var requests int
+			var priority, sound string
+			httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				requests++
+				if err := r.ParseForm(); err != nil {
+					t.Fatalf("ParseForm() error = %v", err)
+				}
+				priority, sound = r.Form.Get("priority"), r.Form.Get("sound")
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"status":1,"request":"request-id"}`)),
+					Header:     make(http.Header),
+				}, nil
+			})}
+			app := command.New(command.Options{
+				Stdin:  bytes.NewBufferString(`{"cwd":"/tmp/demo","message":"User action required."}`),
+				Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, HTTPClient: httpClient,
+				Endpoint: "https://pushover.test/messages.json", DedupePath: filepath.Join(dir, "dedupe.json"),
+			})
+			if err := app.Run(context.Background(), []string{
+				"vibe-pushover", "notify", "--config", path, "--agent", "mimo", "--event", event,
+			}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if requests != 1 || priority != "1" || sound != "persistent" {
+				t.Fatalf("requests=%d priority=%q sound=%q, want one high-priority persistent notification", requests, priority, sound)
+			}
+		})
+	}
+}
+
 func TestNotifyCommandSkipsAuggieNonCompletionStop(t *testing.T) {
 	t.Parallel()
 
@@ -810,6 +902,23 @@ func TestPreviewCommandShowsNotificationWithoutCredentials(t *testing.T) {
 	}
 }
 
+func TestPreviewCommandShowsUrgentProfileCompletionIsSuppressed(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin: bytes.NewBufferString(`{"cwd":"/tmp/demo"}`), Stdout: &stdout, Stderr: &bytes.Buffer{},
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "preview", "--agent", "codex", "--event", "turn-complete", "--profile", "urgent",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "Delivery: suppressed by urgent profile" {
+		t.Fatalf("preview output = %q", got)
+	}
+}
+
 func TestPreviewUsesProcessDirectoryWhenHookPayloadHasNoWorkspace(t *testing.T) {
 	t.Parallel()
 
@@ -868,7 +977,7 @@ func TestAgentsCommandShowsCapabilities(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"aider", "amp", "auggie", "claude", "codex", "copilot", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "kimi", "kiro", "mistral", "omp", "opencode", "pi", "qoder", "qwen", "vscode", "windsurf",
+		"aider", "amp", "auggie", "claude", "codex", "copilot", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "kimi", "kiro", "mimo", "mistral", "omp", "opencode", "pi", "qoder", "qwen", "vscode", "windsurf",
 		"completion+approval", "completion+approval+attention", "completion+attention", "completion only",
 	} {
 		if !strings.Contains(output, want) {
@@ -886,17 +995,17 @@ func TestProfileCommandUpdatesExistingConfig(t *testing.T) {
 	}
 	var stdout bytes.Buffer
 	app := command.New(command.Options{Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &bytes.Buffer{}})
-	if err := app.Run(context.Background(), []string{"vibe-pushover", "profile", "--config", path, "quiet"}); err != nil {
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "profile", "--config", path, "urgent"}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	got, err := config.Load(path)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if got.NotificationProfile != "quiet" || got.AppToken != "app-token" || got.UserKey != "user-key" {
+	if got.NotificationProfile != "urgent" || got.AppToken != "app-token" || got.UserKey != "user-key" {
 		t.Fatalf("updated config = %#v", got)
 	}
-	if !strings.Contains(stdout.String(), "quiet") {
+	if !strings.Contains(stdout.String(), "urgent") {
 		t.Fatalf("output = %q", stdout.String())
 	}
 }

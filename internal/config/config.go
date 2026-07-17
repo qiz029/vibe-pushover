@@ -93,9 +93,9 @@ func (c Credentials) Validate() error {
 		}
 	}
 	switch c.NotificationProfile {
-	case "", "balanced", "quiet", "watch":
+	case "", "balanced", "quiet", "urgent", "watch":
 	default:
-		return fmt.Errorf("notification profile must be balanced, quiet, or watch, got %q", c.NotificationProfile)
+		return fmt.Errorf("notification profile must be balanced, quiet, urgent, or watch, got %q", c.NotificationProfile)
 	}
 	return nil
 }

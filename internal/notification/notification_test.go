@@ -375,6 +375,7 @@ func TestBuildUsesProductNamesInNotificationTitles(t *testing.T) {
 
 	for agent, want := range map[string]string{
 		"cortex":   "✓ Cortex Code finished · demo",
+		"mimo":     "✓ MiMo Code finished · demo",
 		"mistral":  "✓ Mistral Vibe finished · demo",
 		"omp":      "✓ Oh My Pi finished · demo",
 		"opencode": "✓ OpenCode finished · demo",
@@ -388,6 +389,26 @@ func TestBuildUsesProductNamesInNotificationTitles(t *testing.T) {
 		if got.Title != want {
 			t.Errorf("Build(%q) title = %q, want %q", agent, got.Title, want)
 		}
+	}
+}
+
+func TestUrgentProfileOnlySuppressesCompletedTurns(t *testing.T) {
+	t.Parallel()
+
+	if notification.ShouldDeliver(notification.EventTurnComplete, "urgent") {
+		t.Fatal("urgent profile delivers completed turns")
+	}
+	for _, event := range []notification.Event{notification.EventApprovalRequired, notification.EventAttentionRequired} {
+		if !notification.ShouldDeliver(event, "urgent") {
+			t.Fatalf("urgent profile suppresses %s", event)
+		}
+	}
+	message, err := notification.ApplyProfile(notification.Message{Priority: 1, Sound: "persistent"}, notification.EventApprovalRequired, "urgent")
+	if err != nil {
+		t.Fatalf("ApplyProfile() error = %v", err)
+	}
+	if message.Priority != 1 || message.Sound != "persistent" {
+		t.Fatalf("urgent approval delivery = %#v", message)
 	}
 }
 

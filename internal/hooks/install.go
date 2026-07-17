@@ -35,6 +35,7 @@ var agentCatalog = []AgentInfo{
 	{Name: "hermes", DisplayName: "Hermes Agent", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "kimi", DisplayName: "Kimi Code CLI", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "kiro", DisplayName: "Kiro", Capabilities: "completion only (macOS/Linux)", Resource: "hooks"},
+	{Name: "mimo", DisplayName: "MiMo Code", Capabilities: "completion+approval", Resource: "plugin"},
 	{Name: "mistral", DisplayName: "Mistral Vibe", Capabilities: "completion only", Resource: "hooks (experimental)"},
 	{Name: "omp", DisplayName: "Oh My Pi", Capabilities: "completion+approval", Resource: "extension"},
 	{Name: "opencode", DisplayName: "OpenCode", Capabilities: "completion+approval", Resource: "plugin"},
@@ -116,6 +117,14 @@ func DefaultPath(agent string) (string, error) {
 			return filepath.Join(grokHome, "hooks", "vibe-pushover.json"), nil
 		}
 	}
+	if agent == "mimo" {
+		if mimoHome := os.Getenv("MIMOCODE_HOME"); mimoHome != "" {
+			if !filepath.IsAbs(mimoHome) {
+				return "", fmt.Errorf("resolve MiMo Code home: MIMOCODE_HOME must be absolute, got %q", mimoHome)
+			}
+			return filepath.Join(mimoHome, "config", "plugins", "vibe-pushover.ts"), nil
+		}
+	}
 	if agent == "pi" {
 		if agentDir := os.Getenv("PI_CODING_AGENT_DIR"); agentDir != "" {
 			agentDir, err := expandHome(agentDir)
@@ -183,6 +192,8 @@ func DefaultPath(agent string) (string, error) {
 		return filepath.Join(home, ".vibe", "hooks.toml"), nil
 	case "omp":
 		return filepath.Join(home, ".omp", "agent", "extensions", "vibe-pushover", "index.ts"), nil
+	case "mimo":
+		return mimoPluginPath(runtime.GOOS, home, os.Getenv)
 	case "opencode":
 		configDir := os.Getenv("XDG_CONFIG_HOME")
 		if configDir == "" {
@@ -207,6 +218,40 @@ func DefaultPath(agent string) (string, error) {
 	default:
 		return "", unsupportedAgentError(agent)
 	}
+}
+
+func mimoPluginPath(goos, home string, getenv func(string) string) (string, error) {
+	configDir := getenv("XDG_CONFIG_HOME")
+	if configDir == "" && goos == "windows" {
+		configDir = getenv("LOCALAPPDATA")
+		if configDir == "" {
+			configDir = filepath.Join(home, "AppData", "Local")
+		}
+	}
+	if configDir == "" {
+		configDir = filepath.Join(home, ".config")
+	} else if configDir == "~" || strings.HasPrefix(configDir, "~/") || strings.HasPrefix(configDir, `~\`) {
+		if configDir == "~" {
+			configDir = home
+		} else {
+			configDir = filepath.Join(home, configDir[2:])
+		}
+	}
+	if !isAbsolutePathForOS(goos, configDir) {
+		return "", fmt.Errorf("resolve MiMo Code config home: path must be absolute, got %q", configDir)
+	}
+	return filepath.Join(configDir, "mimocode", "plugins", "vibe-pushover.ts"), nil
+}
+
+func isAbsolutePathForOS(goos, path string) bool {
+	if goos != "windows" {
+		return filepath.IsAbs(path)
+	}
+	if filepath.IsAbs(path) || strings.HasPrefix(path, `\\`) {
+		return true
+	}
+	return len(path) >= 3 && path[1] == ':' && (path[2] == '\\' || path[2] == '/') &&
+		((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z'))
 }
 
 func expandHome(path string) (string, error) {
@@ -255,7 +300,10 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 		return installHermesHooks(path, executable, pushoverConfig)
 	}
 	if agent == "opencode" {
-		return installOpenCodePlugin(path, executable, pushoverConfig)
+		return installOpenCodePlugin(path, executable, pushoverConfig, agent, "OpenCode")
+	}
+	if agent == "mimo" {
+		return installOpenCodePlugin(path, executable, pushoverConfig, agent, "MiMo Code")
 	}
 	if agent == "windsurf" {
 		return installWindsurfHooks(path, executable, pushoverConfig)

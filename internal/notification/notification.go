@@ -27,6 +27,10 @@ type Message struct {
 	TTL      int
 }
 
+func ShouldDeliver(event Event, profile string) bool {
+	return profile != "urgent" || event != EventTurnComplete
+}
+
 func ApplyProfile(message Message, event Event, profile string) (Message, error) {
 	switch profile {
 	case "", "balanced":
@@ -40,6 +44,8 @@ func ApplyProfile(message Message, event Event, profile string) (Message, error)
 			message.Priority = 0
 			message.Sound = "pushover"
 		}
+		return message, nil
+	case "urgent":
 		return message, nil
 	default:
 		return Message{}, fmt.Errorf("unknown notification profile %q", profile)
@@ -222,6 +228,7 @@ func displayName(value string) string {
 	if name, ok := map[string]string{
 		"cortex":   "Cortex Code",
 		"grok":     "Grok Build",
+		"mimo":     "MiMo Code",
 		"mistral":  "Mistral Vibe",
 		"omp":      "Oh My Pi",
 		"opencode": "OpenCode",

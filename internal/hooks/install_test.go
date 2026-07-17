@@ -45,6 +45,29 @@ func TestDefaultPathOMPHonorsAgentDir(t *testing.T) {
 	}
 }
 
+func TestDefaultPathMiMoHonorsMiMoCodeHome(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "mimocode-home")
+	t.Setenv("MIMOCODE_HOME", dir)
+	t.Setenv("HOME", "")
+
+	got, err := hooks.DefaultPath("mimo")
+	if err != nil {
+		t.Fatalf("DefaultPath() error = %v", err)
+	}
+	want := filepath.Join(dir, "config", "plugins", "vibe-pushover.ts")
+	if got != want {
+		t.Fatalf("DefaultPath() = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultPathMiMoRejectsRelativeMiMoCodeHome(t *testing.T) {
+	t.Setenv("MIMOCODE_HOME", "relative/home")
+
+	if _, err := hooks.DefaultPath("mimo"); err == nil {
+		t.Fatal("DefaultPath() accepted relative MIMOCODE_HOME")
+	}
+}
+
 func TestDefaultPathsForAdditionalAgents(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -63,6 +86,7 @@ func TestDefaultPathsForAdditionalAgents(t *testing.T) {
 		"goose":    filepath.Join(home, ".agents", "plugins", "vibe-pushover"),
 		"hermes":   filepath.Join(home, ".hermes", "config.yaml"),
 		"kiro":     filepath.Join(home, ".kiro", "hooks", "vibe-pushover.json"),
+		"mimo":     filepath.Join(home, ".xdg", "mimocode", "plugins", "vibe-pushover.ts"),
 		"opencode": filepath.Join(home, ".xdg", "opencode", "plugins", "vibe-pushover.ts"),
 		"omp":      filepath.Join(home, ".omp", "agent", "extensions", "vibe-pushover", "index.ts"),
 		"qoder":    filepath.Join(home, ".qoder", "settings.json"),
@@ -1236,6 +1260,12 @@ func TestInstallCreatesOpenCodePlugin(t *testing.T) {
 		t.Fatalf("ReadFile() error = %v", err)
 	}
 	for _, want := range []string{
+		`const childSessions = new Set();`,
+		`event.type === "session.created"`,
+		`event.type === "session.deleted"`,
+		`event.properties?.info?.parentID`,
+		`childSessions.has(sessionID)`,
+		`childSessions.delete(deletedSessionID)`,
 		`event.type === "session.idle"`,
 		`event.type === "permission.asked"`,
 		`"--agent", "opencode"`,
@@ -1251,6 +1281,107 @@ func TestInstallCreatesOpenCodePlugin(t *testing.T) {
 	}
 	if changed {
 		t.Fatal("second Install() changed OpenCode plugin")
+	}
+}
+
+func TestInstallCreatesMiMoCodePlugin(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "mimocode", "plugins", "vibe-pushover.ts")
+	changed, err := hooks.Install("mimo", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	for _, want := range []string{
+		`const childSessions = new Set();`,
+		`event.type === "session.created"`,
+		`event.type === "session.deleted"`,
+		`event.properties?.info?.parentID`,
+		`childSessions.has(sessionID)`,
+		`childSessions.delete(deletedSessionID)`,
+		`event.type === "session.idle"`,
+		`event.type === "permission.asked"`,
+		`"--agent", "mimo"`,
+		`"/tmp/pushover.json"`,
+	} {
+		if !bytes.Contains(data, []byte(want)) {
+			t.Fatalf("MiMo Code plugin does not contain %q:\n%s", want, data)
+		}
+	}
+	changed, err = hooks.Install("mimo", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed MiMo Code plugin")
+	}
+}
+
+func TestInstallMiMoCodePluginRefusesNonOwnedFile(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "mimocode", "plugins", "vibe-pushover.ts")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	original := []byte("// User-owned MiMo plugin.\n")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := hooks.Install("mimo", path, "/opt/bin/vibe-pushover", ""); err == nil {
+		t.Fatal("Install() overwrote a non-owned MiMo Code plugin")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !bytes.Equal(got, original) {
+		t.Fatalf("non-owned MiMo Code plugin changed:\n%s", got)
+	}
+}
+
+func TestInstallMiMoCodePluginPreservesSymlinkOnUpdate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior is platform-specific")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "shared-vibe-pushover.ts")
+	if _, err := hooks.Install("mimo", target, "/old/vibe-pushover", "/old/config.json"); err != nil {
+		t.Fatalf("initial Install() error = %v", err)
+	}
+	path := filepath.Join(dir, "mimocode", "plugins", "vibe-pushover.ts")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+
+	if _, err := hooks.Install("mimo", path, "/new/vibe-pushover", "/new/config.json"); err != nil {
+		t.Fatalf("update Install() error = %v", err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("Lstat() error = %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("Install() replaced MiMo Code plugin symlink")
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("ReadFile(target) error = %v", err)
+	}
+	if !bytes.Contains(data, []byte(`/new/vibe-pushover`)) || !bytes.Contains(data, []byte(`/new/config.json`)) {
+		t.Fatalf("symlink target was not updated:\n%s", data)
 	}
 }
 

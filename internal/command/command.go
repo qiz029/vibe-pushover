@@ -100,7 +100,7 @@ func profileCommand(options Options) *cli.Command {
 	return &cli.Command{
 		Name:      "profile",
 		Usage:     "show or change the notification profile",
-		ArgsUsage: "[balanced|quiet|watch]",
+		ArgsUsage: "[balanced|quiet|urgent|watch]",
 		Flags:     []cli.Flag{configFlag()},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			path, err := configPath(cmd.String("config"))
@@ -161,7 +161,7 @@ func previewCommand(options Options) *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "agent", Usage: "source agent name", Required: true},
 			&cli.StringFlag{Name: "event", Usage: "turn-complete, approval-required, or attention-required", Required: true},
-			&cli.StringFlag{Name: "profile", Usage: "notification profile: balanced, quiet, or watch", Value: "balanced"},
+			&cli.StringFlag{Name: "profile", Usage: "notification profile: balanced, quiet, urgent, or watch", Value: "balanced"},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			payload, err := readPayload(options.Stdin)
@@ -173,7 +173,12 @@ func previewCommand(options Options) *cli.Command {
 			if err != nil {
 				return err
 			}
-			message, err = notification.ApplyProfile(message, event, strings.ToLower(strings.TrimSpace(cmd.String("profile"))))
+			profile := strings.ToLower(strings.TrimSpace(cmd.String("profile")))
+			if !notification.ShouldDeliver(event, profile) {
+				_, err = fmt.Fprintf(options.Stdout, "Delivery: suppressed by %s profile\n", profile)
+				return err
+			}
+			message, err = notification.ApplyProfile(message, event, profile)
 			if err != nil {
 				return err
 			}
@@ -208,8 +213,8 @@ func setupCommand(options Options) *cli.Command {
 				return err
 			}
 			profile, err := prompter.readChoice(
-				"Notification profile [balanced/quiet/watch] (balanced): ",
-				"balanced", "balanced", "quiet", "watch",
+				"Notification profile [balanced/quiet/urgent/watch] (balanced): ",
+				"balanced", "balanced", "quiet", "urgent", "watch",
 			)
 			if err != nil {
 				return err
@@ -362,6 +367,8 @@ func notifyCommand(options Options) *cli.Command {
 					credentials, loadErr := config.Load(path)
 					if loadErr != nil {
 						err = loadErr
+					} else if !notification.ShouldDeliver(event, credentials.NotificationProfile) {
+						return nil
 					} else if message, err = notification.ApplyProfile(message, event, credentials.NotificationProfile); err == nil {
 						fingerprint := notificationFingerprint(cmd.String("agent"), event, notificationDestination(credentials), payload, message)
 						store := dedupe.Store{Path: options.DedupePath, Now: options.Now}
