@@ -113,8 +113,9 @@ func TestSetupCommandStoresOnCallNotificationProfile(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "config.json")
+	var stdout bytes.Buffer
 	app := command.New(command.Options{
-		Stdin: bytes.NewBufferString("app-token\nuser-key\non-call\n\n\n"), Stdout: &bytes.Buffer{},
+		Stdin: bytes.NewBufferString("app-token\nuser-key\non-call\n\n\n"), Stdout: &stdout,
 	})
 	if err := app.Run(context.Background(), []string{"vibe-pushover", "setup", "--config", path}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -125,6 +126,9 @@ func TestSetupCommandStoresOnCallNotificationProfile(t *testing.T) {
 	}
 	if got.NotificationProfile != "on-call" {
 		t.Fatalf("NotificationProfile = %q, want on-call", got.NotificationProfile)
+	}
+	if want := "Approval and attention notifications will repeat every 1m0s for up to 15m0s or until acknowledged."; !strings.Contains(stdout.String(), want) {
+		t.Fatalf("setup output does not contain %q:\n%s", want, stdout.String())
 	}
 }
 
@@ -168,6 +172,40 @@ func TestTestCommandSendsConfiguredApprovalExperience(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "approval-required") {
 		t.Fatalf("output = %q, want tested event", stdout.String())
+	}
+}
+
+func TestTestCommandWarnsThatOnCallNotificationRepeatsUntilAcknowledged(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", NotificationProfile: "on-call",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &bytes.Buffer{},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"status":1,"request":"request-id","receipt":"receipt-id"}`)),
+				Header:     make(http.Header),
+			}, nil
+		})},
+		Endpoint: "https://pushover.test/messages.json",
+	})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "test", "--config", path}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, want := range []string{
+		"Test approval-required notification sent",
+		"Emergency notification repeats every 1m0s for up to 15m0s or until acknowledged.",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("test output does not contain %q:\n%s", want, stdout.String())
+		}
 	}
 }
 
@@ -760,6 +798,25 @@ func TestStatusCommandShowsProfileSuppressedEvents(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if want := "Sounds: turn-complete=suppressed approval-required=persistent attention-required=persistent"; !strings.Contains(stdout.String(), want) {
+		t.Fatalf("status output does not contain %q:\n%s", want, stdout.String())
+	}
+}
+
+func TestStatusCommandShowsOnCallEmergencyRetrySchedule(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", NotificationProfile: "on-call",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var stdout bytes.Buffer
+	app := command.New(command.Options{Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &bytes.Buffer{}})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "status", "--config", path}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if want := "Emergency retries: every 1m0s for up to 15m0s or until acknowledged"; !strings.Contains(stdout.String(), want) {
 		t.Fatalf("status output does not contain %q:\n%s", want, stdout.String())
 	}
 }
@@ -2063,6 +2120,28 @@ func TestProfileCommandUpdatesExistingConfig(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "urgent") {
 		t.Fatalf("output = %q", stdout.String())
+	}
+}
+
+func TestProfileCommandWarnsWhenEnablingOnCall(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var stdout bytes.Buffer
+	app := command.New(command.Options{Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &bytes.Buffer{}})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "profile", "--config", path, "on-call"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, want := range []string{
+		"Notification profile set to on-call",
+		"Approval and attention notifications will repeat every 1m0s for up to 15m0s or until acknowledged.",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("profile output does not contain %q:\n%s", want, stdout.String())
+		}
 	}
 }
 

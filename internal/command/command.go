@@ -131,9 +131,30 @@ func statusCommand(options Options) *cli.Command {
 				statusSound(credentials, notification.EventApprovalRequired),
 				statusSound(credentials, notification.EventAttentionRequired),
 			)
+			if err != nil {
+				return err
+			}
+			if retry, expire, ok := emergencySchedule(profile); ok {
+				_, err = fmt.Fprintf(options.Stdout,
+					"Emergency retries: every %s for up to %s or until acknowledged\n",
+					retry, expire,
+				)
+			}
 			return err
 		},
 	}
+}
+
+func emergencySchedule(profile string) (time.Duration, time.Duration, bool) {
+	message, err := notification.Build("vibe-pushover", notification.EventApprovalRequired, nil)
+	if err != nil {
+		return 0, 0, false
+	}
+	message, err = notification.ApplyProfile(message, notification.EventApprovalRequired, profile)
+	if err != nil || message.Priority != 2 {
+		return 0, 0, false
+	}
+	return time.Duration(message.Retry) * time.Second, time.Duration(message.Expire) * time.Second, true
 }
 
 func statusSound(credentials config.Credentials, event notification.Event) string {
@@ -531,6 +552,14 @@ func profileCommand(options Options) *cli.Command {
 				return err
 			}
 			_, err = fmt.Fprintf(options.Stdout, "Notification profile set to %s\n", profile)
+			if err == nil {
+				if retry, expire, ok := emergencySchedule(profile); ok {
+					_, err = fmt.Fprintf(options.Stdout,
+						"Approval and attention notifications will repeat every %s for up to %s or until acknowledged.\n",
+						retry, expire,
+					)
+				}
+			}
 			return err
 		},
 	}
@@ -831,6 +860,14 @@ func setupCommand(options Options) *cli.Command {
 				return err
 			}
 			_, err = fmt.Fprintf(options.Stdout, "Saved Pushover credentials to %s\n", path)
+			if err == nil {
+				if retry, expire, ok := emergencySchedule(profile); ok {
+					_, err = fmt.Fprintf(options.Stdout,
+						"Approval and attention notifications will repeat every %s for up to %s or until acknowledged.\n",
+						retry, expire,
+					)
+				}
+			}
 			return err
 		},
 	}
@@ -1191,6 +1228,13 @@ func testCommand(options Options) *cli.Command {
 				return err
 			}
 			_, err = fmt.Fprintf(options.Stdout, "Test %s notification sent\n", event)
+			if err == nil && message.Priority == 2 {
+				_, err = fmt.Fprintf(options.Stdout,
+					"Emergency notification repeats every %s for up to %s or until acknowledged.\n",
+					time.Duration(message.Retry)*time.Second,
+					time.Duration(message.Expire)*time.Second,
+				)
+			}
 			return err
 		},
 	}
