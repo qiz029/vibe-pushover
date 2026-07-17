@@ -122,6 +122,7 @@ func upsertCraftAutomation(value any, spec craftAutomationSpec, command string) 
 			return nil, false, errors.New("automation value must be an array")
 		}
 	}
+	changed := false
 	for entryIndex, rawEntry := range entries {
 		entry, ok := rawEntry.(map[string]any)
 		if !ok {
@@ -131,38 +132,50 @@ func upsertCraftAutomation(value any, spec craftAutomationSpec, command string) 
 		if !ok {
 			continue
 		}
-		for actionIndex, rawAction := range actions {
+		var ownedAction map[string]any
+		otherActions := make([]any, 0, len(actions))
+		for _, rawAction := range actions {
 			action, ok := rawAction.(map[string]any)
 			if !ok || !isOwnedCraftCommand(fmt.Sprint(action["command"]), spec.Event) {
+				otherActions = append(otherActions, rawAction)
 				continue
 			}
-			matcher, _ := entry["matcher"].(string)
-			if matcher != spec.Matcher && len(actions) > 1 {
-				entry["actions"] = append(actions[:actionIndex], actions[actionIndex+1:]...)
-				entries[entryIndex] = entry
-				break
+			if ownedAction == nil {
+				ownedAction = action
 			}
-			if spec.Matcher == "" {
-				delete(entry, "matcher")
-			} else {
-				entry["matcher"] = spec.Matcher
-			}
-			_, permissionModeExists := entry["permissionMode"]
-			if !permissionModeExists {
-				entry["permissionMode"] = "allow-all"
-			}
-			matches := permissionModeExists && matcher == spec.Matcher && action["type"] == "command" && action["command"] == command && fmt.Sprint(action["timeout"]) == "10000"
-			if matches {
-				return entries, false, nil
-			}
-			action["type"] = "command"
-			action["command"] = command
-			action["timeout"] = 10000
-			actions[actionIndex] = action
-			entry["actions"] = actions
-			entries[entryIndex] = entry
-			return entries, true, nil
 		}
+		if ownedAction == nil {
+			continue
+		}
+		if len(otherActions) > 0 {
+			// permissionMode applies to every action in a matcher group. Move the
+			// notifier out before granting it allow-all so sibling commands keep
+			// their existing security policy.
+			entry["actions"] = otherActions
+			entries[entryIndex] = entry
+			changed = true
+			continue
+		}
+
+		matcher, _ := entry["matcher"].(string)
+		permissionMode, _ := entry["permissionMode"].(string)
+		matches := len(actions) == 1 && matcher == spec.Matcher && permissionMode == "allow-all" &&
+			ownedAction["type"] == "command" && ownedAction["command"] == command && fmt.Sprint(ownedAction["timeout"]) == "10000"
+		if matches {
+			return entries, changed, nil
+		}
+		if spec.Matcher == "" {
+			delete(entry, "matcher")
+		} else {
+			entry["matcher"] = spec.Matcher
+		}
+		entry["permissionMode"] = "allow-all"
+		ownedAction["type"] = "command"
+		ownedAction["command"] = command
+		ownedAction["timeout"] = 10000
+		entry["actions"] = []any{ownedAction}
+		entries[entryIndex] = entry
+		return entries, true, nil
 	}
 	entry := map[string]any{
 		"permissionMode": "allow-all",

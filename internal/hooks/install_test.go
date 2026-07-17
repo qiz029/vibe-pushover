@@ -1305,6 +1305,118 @@ func TestInstallCraftAddsLifecycleAutomationsWithoutControllingApproval(t *testi
 	}
 }
 
+func TestInstallCraftSeparatesOwnedActionBeforeGrantingAllowAll(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "automations.json")
+	original := map[string]any{
+		"version": 2,
+		"automations": map[string]any{
+			"Notification": []any{map[string]any{
+				"matcher": "permission_prompt",
+				"actions": []any{
+					map[string]any{"type": "command", "command": "personal-audit"},
+					map[string]any{"type": "command", "command": "'/old/vibe-pushover' notify --agent craft --event approval-required --ignore-errors --payload-env CRAFT_EVENT_DATA"},
+				},
+			}},
+		},
+	}
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	changed, err := hooks.Install("craft", path, "/opt/bin/vibe-pushover", "")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+	data, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var got struct {
+		Automations map[string][]map[string]any `json:"automations"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	permissionGroups := got.Automations["Notification"]
+	var thirdParty, owned map[string]any
+	for _, group := range permissionGroups {
+		actions, _ := group["actions"].([]any)
+		for _, rawAction := range actions {
+			action, _ := rawAction.(map[string]any)
+			command := fmt.Sprint(action["command"])
+			switch {
+			case command == "personal-audit":
+				thirdParty = group
+			case strings.Contains(command, "notify --agent craft --event approval-required"):
+				owned = group
+			}
+		}
+	}
+	if thirdParty == nil || owned == nil {
+		t.Fatalf("Craft permission groups = %#v", permissionGroups)
+	}
+	if _, exists := thirdParty["permissionMode"]; exists {
+		t.Fatalf("third-party group received elevated permission mode: %#v", thirdParty)
+	}
+	thirdPartyActions, _ := thirdParty["actions"].([]any)
+	if len(thirdPartyActions) != 1 {
+		t.Fatalf("third-party group actions = %#v", thirdPartyActions)
+	}
+	ownedActions, _ := owned["actions"].([]any)
+	if owned["permissionMode"] != "allow-all" || len(ownedActions) != 1 {
+		t.Fatalf("owned group = %#v", owned)
+	}
+}
+
+func TestInstallCraftRepairsOwnedActionPermissionMode(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "automations.json")
+	original := `{"version":2,"automations":{"Stop":[{"permissionMode":"safe","actions":[{"type":"command","command":"'/old/vibe-pushover' notify --agent craft --event turn-complete --ignore-errors --payload-env CRAFT_EVENT_DATA --skip-active-stop","timeout":10000}]}]}}`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	changed, err := hooks.Install("craft", path, "/opt/bin/vibe-pushover", "")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want permission mode repair")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var got struct {
+		Automations map[string][]map[string]any `json:"automations"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	stop := got.Automations["Stop"]
+	if len(stop) != 1 || stop[0]["permissionMode"] != "allow-all" {
+		t.Fatalf("Craft Stop automations = %#v", stop)
+	}
+
+	changed, err = hooks.Install("craft", path, "/opt/bin/vibe-pushover", "")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed repaired Craft automation")
+	}
+}
+
 func TestInstallCraftPreservesAutomationSymlink(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink behavior is platform-specific")
