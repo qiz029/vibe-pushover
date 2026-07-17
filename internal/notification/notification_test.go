@@ -163,6 +163,22 @@ func TestBuildKiroCompletionUsesAssistantResponse(t *testing.T) {
 	}
 }
 
+func TestBuildZCodeCompletionUsesResponsePreview(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("zcode", notification.EventTurnComplete, map[string]any{
+		"cwd":             "/tmp/zcode-demo",
+		"message":         "Stop hook invoked",
+		"responsePreview": "## Result\n\nImplemented ZCode notifications.\nAll tests pass.",
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Title != "✓ ZCode finished · zcode-demo" || got.Body != "Implemented ZCode notifications." {
+		t.Fatalf("ZCode notification = %#v", got)
+	}
+}
+
 func TestBuildClineIDECompletionUsesTaskResultAndWorkspace(t *testing.T) {
 	t.Parallel()
 

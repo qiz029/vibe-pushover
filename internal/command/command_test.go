@@ -1453,12 +1453,37 @@ func TestAgentsCommandShowsCapabilities(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"aider", "amp", "antigravity", "auggie", "claude", "cline", "codebuddy", "codewhale", "codex", "copilot", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "kimi", "kiro", "mimo", "mistral", "omp", "openhands", "opencode", "pi", "qoder", "qwen", "rovo", "tabnine", "trae", "vscode", "windsurf",
+		"aider", "amp", "antigravity", "auggie", "claude", "cline", "codebuddy", "codewhale", "codex", "copilot", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "kimi", "kiro", "mimo", "mistral", "omp", "openhands", "opencode", "pi", "qoder", "qwen", "rovo", "tabnine", "trae", "vscode", "windsurf", "workbuddy", "zcode",
 		"completion+approval", "completion+approval+attention", "completion+attention", "completion only",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("agents output does not contain %q:\n%s", want, output)
 		}
+	}
+}
+
+func TestAgentsCommandCanShowOnlyDetectedAgents(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for _, marker := range []string{".codex", ".zcode"} {
+		if err := os.MkdirAll(filepath.Join(home, marker), 0o700); err != nil {
+			t.Fatalf("MkdirAll(%q) error = %v", marker, err)
+		}
+	}
+
+	var stdout bytes.Buffer
+	app := command.New(command.Options{Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &bytes.Buffer{}})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "agents", "--detected"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	output := stdout.String()
+	for _, want := range []string{"codex", "zcode"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("detected agents output does not contain %q:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, "claude") {
+		t.Fatalf("detected agents output unexpectedly contains Claude:\n%s", output)
 	}
 }
 
@@ -1845,6 +1870,54 @@ func TestInstallCommandWiresCustomPushoverConfig(t *testing.T) {
 	}
 }
 
+func TestInstallCommandConfiguresDetectedAgents(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	for _, path := range []string{
+		filepath.Join(home, ".codex"),
+		filepath.Join(home, ".zcode", "cli"),
+	} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatalf("MkdirAll(%q) error = %v", path, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(home, ".zcode", "cli", "config.json"), []byte(`{"provider":{"type":"custom"}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile(ZCode config) error = %v", err)
+	}
+
+	stdout := &bytes.Buffer{}
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: stdout, Stderr: &bytes.Buffer{}, Executable: "/opt/bin/vibe-pushover",
+	})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "install", "--detected"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, want := range []string{"Installed codex hooks", "Installed zcode hooks"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("install output does not contain %q: %q", want, stdout.String())
+		}
+	}
+	for _, installed := range []struct {
+		path    string
+		command string
+	}{
+		{filepath.Join(home, ".codex", "hooks.json"), "notify --agent codex --event turn-complete"},
+		{filepath.Join(home, ".zcode", "cli", "config.json"), "notify --agent zcode --event turn-complete"},
+	} {
+		data, err := os.ReadFile(installed.path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) error = %v", installed.path, err)
+		}
+		if !bytes.Contains(data, []byte(installed.command)) {
+			t.Fatalf("%s does not contain %q:\n%s", installed.path, installed.command, data)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("undetected Claude config was created: %v", err)
+	}
+}
+
 func TestInstallCommandCreatesPiExtension(t *testing.T) {
 	t.Parallel()
 
@@ -2165,6 +2238,113 @@ func TestInstallCommandCreatesCodeBuddyLifecycleHooks(t *testing.T) {
 	}
 	if !bytes.Equal(after, before) {
 		t.Fatalf("second install changed CodeBuddy settings:\n%s", after)
+	}
+}
+
+func TestInstallCommandCreatesZCodeLifecycleHooks(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".zcode", "cli", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	original := `{"provider":{"type":"custom"},"hooks":{"enabled":true,"timeoutMs":45000,"maxOutputBytes":16384,"events":{"PostToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"./format.sh","async":false}]}]}}}`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	stdout := &bytes.Buffer{}
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: stdout, Stderr: &bytes.Buffer{}, Executable: "/opt/bin/vibe-pushover",
+	})
+	args := []string{"vibe-pushover", "install", "--agent", "zcode", "--agent-config", path}
+	if err := app.Run(context.Background(), args); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	for _, want := range []string{
+		`"type": "custom"`,
+		`"timeoutMs": 45000`,
+		`"maxOutputBytes": 16384`,
+		`"command": "./format.sh"`,
+		`"Stop"`,
+		`"PermissionRequest"`,
+		"notify --agent zcode --event turn-complete --ignore-errors",
+		"notify --agent zcode --event approval-required --ignore-errors",
+	} {
+		if !bytes.Contains(data, []byte(want)) {
+			t.Fatalf("ZCode config does not contain %q:\n%s", want, data)
+		}
+	}
+	if !strings.Contains(stdout.String(), "Installed zcode hooks") {
+		t.Fatalf("install output = %q", stdout.String())
+	}
+
+	before := append([]byte(nil), data...)
+	stdout.Reset()
+	if err := app.Run(context.Background(), args); err != nil {
+		t.Fatalf("second Run() error = %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(after second install) error = %v", err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatalf("second install changed ZCode config:\n%s", after)
+	}
+	if !strings.Contains(stdout.String(), "zcode hooks already installed") {
+		t.Fatalf("second install output = %q", stdout.String())
+	}
+}
+
+func TestInstallCommandCreatesWorkBuddyLifecycleHooks(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".workbuddy", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"theme":"dark"}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Executable: "/opt/bin/vibe-pushover",
+	})
+	args := []string{"vibe-pushover", "install", "--agent", "workbuddy", "--agent-config", path}
+	if err := app.Run(context.Background(), args); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	for _, want := range []string{
+		`"theme": "dark"`,
+		`"Stop"`,
+		`"StopFailure"`,
+		`"PermissionRequest"`,
+		"notify --agent workbuddy --event turn-complete --ignore-errors --skip-active-stop",
+		"notify --agent workbuddy --event attention-required --ignore-errors",
+		"notify --agent workbuddy --event approval-required --ignore-errors",
+	} {
+		if !bytes.Contains(data, []byte(want)) {
+			t.Fatalf("WorkBuddy settings do not contain %q:\n%s", want, data)
+		}
+	}
+	before := append([]byte(nil), data...)
+	if err := app.Run(context.Background(), args); err != nil {
+		t.Fatalf("second Run() error = %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(after second install) error = %v", err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatalf("second install changed WorkBuddy settings:\n%s", after)
 	}
 }
 

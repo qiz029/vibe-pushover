@@ -52,6 +52,8 @@ var agentCatalog = []AgentInfo{
 	{Name: "trae", DisplayName: "TRAE", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "vscode", DisplayName: "VS Code Agent", Capabilities: "completion only", Resource: "hooks (preview)"},
 	{Name: "windsurf", DisplayName: "Windsurf", Capabilities: "completion only", Resource: "hooks"},
+	{Name: "workbuddy", DisplayName: "WorkBuddy", Capabilities: "completion+approval+attention", Resource: "hooks"},
+	{Name: "zcode", DisplayName: "ZCode", Capabilities: "completion+approval", Resource: "hooks"},
 }
 
 func Agents() []AgentInfo {
@@ -277,6 +279,10 @@ func DefaultPath(agent string) (string, error) {
 		return filepath.Join(home, ".copilot", "hooks", "vibe-pushover.json"), nil
 	case "windsurf":
 		return filepath.Join(home, ".codeium", "windsurf", "hooks.json"), nil
+	case "workbuddy":
+		return filepath.Join(home, ".workbuddy", "settings.json"), nil
+	case "zcode":
+		return filepath.Join(home, ".zcode", "cli", "config.json"), nil
 	default:
 		return "", unsupportedAgentError(agent)
 	}
@@ -411,13 +417,18 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	if agent == "tabnine" {
 		return installTabnineHooks(path, executable, pushoverConfig)
 	}
-	if agent == "codebuddy" || agent == "grok" || agent == "trae" {
+	if agent == "zcode" {
+		return installZCodeHooks(path, executable, pushoverConfig)
+	}
+	if agent == "codebuddy" || agent == "grok" || agent == "trae" || agent == "workbuddy" {
 		var err error
 		displayName := "CodeBuddy Code"
 		if agent == "grok" {
 			displayName = "Grok Build"
 		} else if agent == "trae" {
 			displayName = "TRAE"
+		} else if agent == "workbuddy" {
+			displayName = "WorkBuddy"
 		}
 		path, err = resolveJSONHookPath(path, displayName)
 		if err != nil {
@@ -452,12 +463,14 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 
 	for _, spec := range genericHookSpecs(agent) {
 		command := ""
-		if agent == "codebuddy" || agent == "grok" || agent == "trae" {
+		if agent == "codebuddy" || agent == "grok" || agent == "trae" || agent == "workbuddy" {
 			displayName := "CodeBuddy Code"
 			if agent == "grok" {
 				displayName = "Grok Build"
 			} else if agent == "trae" {
 				displayName = "TRAE"
+			} else if agent == "workbuddy" {
+				displayName = "WorkBuddy"
 			}
 			flags := []string(nil)
 			if spec.Flag != "" {
@@ -569,7 +582,7 @@ func unsupportedAgentError(name string) error {
 
 func genericHookSpecs(agent string) []hookSpec {
 	switch agent {
-	case "codebuddy":
+	case "codebuddy", "workbuddy":
 		return []hookSpec{
 			{Name: "Stop", Event: "turn-complete", Timeout: 10, Flag: "--skip-active-stop"},
 			{Name: "StopFailure", Event: "attention-required", Timeout: 10},

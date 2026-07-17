@@ -31,6 +31,150 @@ func TestDefaultPathPiHonorsAgentDir(t *testing.T) {
 	}
 }
 
+func TestDetectedAgentsFindsEverySupportedConfigHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	markers := []string{
+		".aider",
+		filepath.Join(".config", "amp"),
+		filepath.Join(".gemini", "antigravity-cli"),
+		".augment",
+		".claude",
+		filepath.Join("Documents", "Cline"),
+		".codebuddy",
+		".codewhale",
+		".codex",
+		".copilot",
+		filepath.Join(".snowflake", "cortex"),
+		".cursor",
+		".factory",
+		".gemini",
+		filepath.Join(".config", "goose"),
+		".grok",
+		".hermes",
+		".kimi-code",
+		".kiro",
+		filepath.Join(".config", "mimocode"),
+		".vibe",
+		".omp",
+		".openhands",
+		filepath.Join(".config", "opencode"),
+		".pi",
+		".qoder",
+		".qwen",
+		".rovodev",
+		".tabnine",
+		".trae",
+		filepath.Join("Library", "Application Support", "Code", "User"),
+		filepath.Join(".codeium", "windsurf"),
+		".workbuddy",
+		".zcode",
+	}
+	for _, marker := range markers {
+		if err := os.MkdirAll(filepath.Join(home, marker), 0o700); err != nil {
+			t.Fatalf("MkdirAll(%q) error = %v", marker, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(home, ".gemini", "settings.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatalf("WriteFile(Gemini settings) error = %v", err)
+	}
+
+	detected, err := hooks.DetectedAgents()
+	if err != nil {
+		t.Fatalf("DetectedAgents() error = %v", err)
+	}
+	want := hooks.Agents()
+	if len(detected) != len(want) {
+		t.Fatalf("DetectedAgents() returned %d agents, want all %d: %#v", len(detected), len(want), detected)
+	}
+	for index := range want {
+		if detected[index].Name != want[index].Name {
+			t.Fatalf("DetectedAgents()[%d] = %q, want %q", index, detected[index].Name, want[index].Name)
+		}
+	}
+}
+
+func TestDetectedAgentsDoesNotInferGeminiFromAntigravity(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".gemini", "antigravity-cli"), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	detected, err := hooks.DetectedAgents()
+	if err != nil {
+		t.Fatalf("DetectedAgents() error = %v", err)
+	}
+	names := make(map[string]bool, len(detected))
+	for _, agent := range detected {
+		names[agent.Name] = true
+	}
+	if !names["antigravity"] {
+		t.Fatalf("Antigravity was not detected: %#v", detected)
+	}
+	if names["gemini"] {
+		t.Fatalf("Gemini was inferred from Antigravity: %#v", detected)
+	}
+}
+
+func TestDetectedAgentsHonorsSupportedConfigOverrides(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "empty-home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatalf("MkdirAll(HOME) error = %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	overrideRoot := t.TempDir()
+	values := map[string]string{
+		"CLINE_DIR":             filepath.Join(overrideRoot, "cline"),
+		"CODEWHALE_CONFIG_PATH": filepath.Join(overrideRoot, "codewhale", "config.toml"),
+		"COPILOT_HOME":          filepath.Join(overrideRoot, "copilot"),
+		"GEMINI_CLI_HOME":       filepath.Join(overrideRoot, "gemini"),
+		"GROK_HOME":             filepath.Join(overrideRoot, "grok"),
+		"HERMES_HOME":           filepath.Join(overrideRoot, "hermes"),
+		"KIMI_CODE_HOME":        filepath.Join(overrideRoot, "kimi"),
+		"MIMOCODE_HOME":         filepath.Join(overrideRoot, "mimo"),
+		"PI_CODING_AGENT_DIR":   filepath.Join(overrideRoot, "pi"),
+		"VIBE_HOME":             filepath.Join(overrideRoot, "mistral"),
+	}
+	for name, value := range values {
+		t.Setenv(name, value)
+	}
+	for _, name := range []string{"CODEWHALE_HOME", "DEEPSEEK_CONFIG_PATH"} {
+		t.Setenv(name, "")
+	}
+	for name, value := range values {
+		marker := value
+		if name == "CODEWHALE_CONFIG_PATH" {
+			marker = filepath.Dir(value)
+		}
+		if err := os.MkdirAll(marker, 0o700); err != nil {
+			t.Fatalf("MkdirAll(%s) error = %v", name, err)
+		}
+	}
+
+	detected, err := hooks.DetectedAgents()
+	if err != nil {
+		t.Fatalf("DetectedAgents() error = %v", err)
+	}
+	names := make(map[string]bool, len(detected))
+	for _, agent := range detected {
+		names[agent.Name] = true
+	}
+	for _, want := range []string{"cline", "codewhale", "copilot", "gemini", "grok", "hermes", "kimi", "mimo", "mistral", "vscode"} {
+		if !names[want] {
+			t.Errorf("DetectedAgents() omitted %q with its supported override: %#v", want, detected)
+		}
+	}
+	for _, ambiguous := range []string{"omp", "pi"} {
+		if names[ambiguous] {
+			t.Errorf("DetectedAgents() inferred %q from ambiguous PI_CODING_AGENT_DIR: %#v", ambiguous, detected)
+		}
+	}
+}
+
 func TestDefaultPathOMPHonorsAgentDir(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "custom-omp-agent")
 	t.Setenv("PI_CODING_AGENT_DIR", dir)
@@ -105,6 +249,8 @@ func TestDefaultPathsForAdditionalAgents(t *testing.T) {
 		"trae":        filepath.Join(home, ".trae", "hooks.json"),
 		"vscode":      filepath.Join(home, "copilot-home", "hooks", "vibe-pushover.json"),
 		"windsurf":    filepath.Join(home, ".codeium", "windsurf", "hooks.json"),
+		"workbuddy":   filepath.Join(home, ".workbuddy", "settings.json"),
+		"zcode":       filepath.Join(home, ".zcode", "cli", "config.json"),
 	}
 	for agent, want := range tests {
 		got, err := hooks.DefaultPath(agent)
@@ -2579,6 +2725,44 @@ func TestInstallCodeBuddyPreservesThirdPartyCompoundCommand(t *testing.T) {
 	}
 	if !bytes.Contains(data, []byte("'/new/bin/vibe-pushover' notify --agent codebuddy --event turn-complete")) {
 		t.Fatalf("managed CodeBuddy command was not appended:\n%s", data)
+	}
+}
+
+func TestInstallZCodeRespectsExplicitlyDisabledHooks(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".zcode", "cli", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"hooks":{"enabled":false,"events":{}}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	changed, err := hooks.Install("zcode", path, "/opt/bin/vibe-pushover", "")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var root struct {
+		Hooks struct {
+			Enabled bool                        `json:"enabled"`
+			Events  map[string][]map[string]any `json:"events"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if root.Hooks.Enabled {
+		t.Fatal("Install() enabled explicitly disabled ZCode hooks")
+	}
+	if len(root.Hooks.Events["Stop"]) != 1 || len(root.Hooks.Events["PermissionRequest"]) != 1 {
+		t.Fatalf("ZCode events = %#v", root.Hooks.Events)
 	}
 }
 

@@ -139,6 +139,11 @@ func supplementaryURL(payload map[string]any) string {
 }
 
 func completionDetail(agent string, payload map[string]any) string {
+	if agent == "zcode" {
+		if detail := completionLine(stringValue(payload, "responsePreview")); detail != "" {
+			return detail
+		}
+	}
 	if detail := completionLine(firstString(payload, "last_assistant_message", "prompt_response", "assistant_response", "message", "reason")); detail != "" {
 		return detail
 	}
@@ -261,6 +266,8 @@ func displayName(value string) string {
 		"trae":          "TRAE",
 		"vibe-pushover": "vibe-pushover",
 		"vscode":        "VS Code",
+		"workbuddy":     "WorkBuddy",
+		"zcode":         "ZCode",
 	}[strings.ToLower(value)]; ok {
 		return name
 	}

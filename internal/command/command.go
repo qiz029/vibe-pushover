@@ -341,11 +341,22 @@ func agentsCommand(options Options) *cli.Command {
 	return &cli.Command{
 		Name:  "agents",
 		Usage: "list supported coding agents and notification capabilities",
-		Action: func(_ context.Context, _ *cli.Command) error {
+		Flags: []cli.Flag{
+			&cli.BoolFlag{Name: "detected", Usage: "show only supported agents detected on this machine"},
+		},
+		Action: func(_ context.Context, cmd *cli.Command) error {
+			agents := hooks.Agents()
+			if cmd.Bool("detected") {
+				var err error
+				agents, err = hooks.DetectedAgents()
+				if err != nil {
+					return err
+				}
+			}
 			if _, err := fmt.Fprintln(options.Stdout, "AGENT      CAPABILITIES                    INTEGRATION"); err != nil {
 				return err
 			}
-			for _, agent := range hooks.Agents() {
+			for _, agent := range agents {
 				if _, err := fmt.Fprintf(options.Stdout, "%-10s %-31s %s (%s)\n", agent.Name, agent.Capabilities, agent.DisplayName, agent.Resource); err != nil {
 					return err
 				}
@@ -487,13 +498,21 @@ func installCommand(options Options) *cli.Command {
 		Name:  "install",
 		Usage: "install notification hooks or an extension for a local agent",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "agent", Usage: "agent to configure; run `vibe-pushover agents` for the list", Required: true},
+			&cli.StringFlag{Name: "agent", Usage: "agent to configure; run `vibe-pushover agents` for the list"},
+			&cli.BoolFlag{Name: "detected", Usage: "configure every supported agent detected on this machine"},
 			&cli.StringFlag{Name: "agent-config", Usage: "override the agent hook or extension path"},
 			&cli.StringFlag{Name: "binary", Usage: "override the vibe-pushover executable path", Value: options.Executable},
 			configFlag(),
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			agent := strings.ToLower(strings.TrimSpace(cmd.String("agent")))
+			detected := cmd.Bool("detected")
+			if (agent == "") == !detected {
+				return errors.New("install requires exactly one of --agent or --detected")
+			}
+			if detected && cmd.String("agent-config") != "" {
+				return errors.New("--agent-config cannot be used with --detected")
+			}
 			if agent == "deepseek" {
 				agent = "codewhale"
 			}
@@ -505,38 +524,59 @@ func installCommand(options Options) *cli.Command {
 					return fmt.Errorf("resolve Pushover config path: %w", err)
 				}
 			}
-			paths := []string{cmd.String("agent-config")}
-			if paths[0] == "" {
-				var err error
-				paths, err = hooks.DefaultPaths(agent)
-				if err != nil {
-					return err
-				}
+			if !detected {
+				return installAgent(options.Stdout, agent, cmd.String("agent-config"), cmd.String("binary"), pushoverConfig)
 			}
-			resource := "integration"
-			for _, info := range hooks.Agents() {
-				if info.Name == agent {
-					resource = info.Resource
-					break
-				}
-			}
-			changed, err := hooks.InstallAll(agent, paths, cmd.String("binary"), pushoverConfig)
+			agents, err := hooks.DetectedAgents()
 			if err != nil {
 				return err
 			}
-			for index, path := range paths {
-				if changed[index] {
-					_, err = fmt.Fprintf(options.Stdout, "Installed %s %s in %s\n", agent, resource, path)
-				} else {
-					_, err = fmt.Fprintf(options.Stdout, "%s %s already installed in %s\n", agent, resource, path)
-				}
-				if err != nil {
-					return err
+			if len(agents) == 0 {
+				_, err = fmt.Fprintln(options.Stdout, "No supported agent installations detected")
+				return err
+			}
+			var installErrors []error
+			for _, info := range agents {
+				if err := installAgent(options.Stdout, info.Name, "", cmd.String("binary"), pushoverConfig); err != nil {
+					installErrors = append(installErrors, fmt.Errorf("install %s: %w", info.Name, err))
 				}
 			}
-			return nil
+			return errors.Join(installErrors...)
 		},
 	}
+}
+
+func installAgent(stdout io.Writer, agent, agentConfig, executable, pushoverConfig string) error {
+	paths := []string{agentConfig}
+	if paths[0] == "" {
+		var err error
+		paths, err = hooks.DefaultPaths(agent)
+		if err != nil {
+			return err
+		}
+	}
+	resource := "integration"
+	for _, info := range hooks.Agents() {
+		if info.Name == agent {
+			resource = info.Resource
+			break
+		}
+	}
+	changed, err := hooks.InstallAll(agent, paths, executable, pushoverConfig)
+	if err != nil {
+		return err
+	}
+	for index, path := range paths {
+		if changed[index] {
+			_, err = fmt.Fprintf(stdout, "Installed %s %s in %s\n", agent, resource, path)
+		} else {
+			_, err = fmt.Fprintf(stdout, "%s %s already installed in %s\n", agent, resource, path)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func notifyCommand(options Options) *cli.Command {
