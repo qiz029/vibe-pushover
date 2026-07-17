@@ -22,9 +22,12 @@ type AgentInfo struct {
 var agentCatalog = []AgentInfo{
 	{Name: "aider", DisplayName: "Aider", Capabilities: "completion only (macOS/Linux)", Resource: "config+script"},
 	{Name: "amp", DisplayName: "Amp", Capabilities: "completion+approval+attention", Resource: "plugin"},
+	{Name: "antigravity", DisplayName: "Antigravity CLI", Capabilities: "completion only", Resource: "plugin"},
 	{Name: "auggie", DisplayName: "Augment Auggie", Capabilities: "completion only", Resource: "hooks+script"},
 	{Name: "claude", DisplayName: "Claude Code", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "cline", DisplayName: "Cline", Capabilities: "completion only", Resource: "hooks"},
+	{Name: "codebuddy", DisplayName: "CodeBuddy Code", Capabilities: "completion+approval+attention", Resource: "hooks (beta)"},
+	{Name: "codewhale", DisplayName: "CodeWhale (DeepSeek-TUI)", Capabilities: "completion+attention", Resource: "hooks"},
 	{Name: "codex", DisplayName: "Codex CLI", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "copilot", DisplayName: "GitHub Copilot CLI", Capabilities: "completion+attention", Resource: "hooks"},
 	{Name: "cortex", DisplayName: "Snowflake Cortex Code", Capabilities: "completion+approval", Resource: "hooks (preview)"},
@@ -174,8 +177,14 @@ func DefaultPath(agent string) (string, error) {
 		return filepath.Join(home, ".aider.conf.yml"), nil
 	case "amp":
 		return filepath.Join(home, ".config", "amp", "plugins", "vibe-pushover.ts"), nil
+	case "antigravity":
+		return filepath.Join(home, ".gemini", "antigravity-cli", "plugins", "vibe-pushover"), nil
 	case "auggie":
 		return filepath.Join(home, ".augment", "settings.json"), nil
+	case "codebuddy":
+		return filepath.Join(home, ".codebuddy", "settings.json"), nil
+	case "codewhale":
+		return filepath.Join(home, ".codewhale", "config.toml"), nil
 	case "codex":
 		return filepath.Join(home, ".codex", "hooks.json"), nil
 	case "copilot":
@@ -315,8 +324,14 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	if agent == "amp" {
 		return installAmpPlugin(path, executable, pushoverConfig)
 	}
+	if agent == "antigravity" {
+		return installAntigravityPlugin(path, executable, pushoverConfig)
+	}
 	if agent == "auggie" {
 		return installAuggieHooks(path, executable, pushoverConfig)
+	}
+	if agent == "codewhale" {
+		return installCodeWhaleHooks(path, executable, pushoverConfig)
 	}
 	if agent == "copilot" || agent == "vscode" {
 		return installCopilotHooks(path, executable, pushoverConfig)
@@ -363,10 +378,12 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	if agent == "tabnine" {
 		return installTabnineHooks(path, executable, pushoverConfig)
 	}
-	if agent == "grok" || agent == "trae" {
+	if agent == "codebuddy" || agent == "grok" || agent == "trae" {
 		var err error
-		displayName := "Grok Build"
-		if agent == "trae" {
+		displayName := "CodeBuddy Code"
+		if agent == "grok" {
+			displayName = "Grok Build"
+		} else if agent == "trae" {
 			displayName = "TRAE"
 		}
 		path, err = resolveJSONHookPath(path, displayName)
@@ -402,9 +419,11 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 
 	for _, spec := range genericHookSpecs(agent) {
 		command := ""
-		if agent == "grok" || agent == "trae" {
-			displayName := "Grok Build"
-			if agent == "trae" {
+		if agent == "codebuddy" || agent == "grok" || agent == "trae" {
+			displayName := "CodeBuddy Code"
+			if agent == "grok" {
+				displayName = "Grok Build"
+			} else if agent == "trae" {
 				displayName = "TRAE"
 			}
 			command, err = hookNotifyCommandForOS(runtime.GOOS, agent, displayName, executable, spec.Event, pushoverConfig)
@@ -513,6 +532,12 @@ func unsupportedAgentError(name string) error {
 
 func genericHookSpecs(agent string) []hookSpec {
 	switch agent {
+	case "codebuddy":
+		return []hookSpec{
+			{Name: "Stop", Event: "turn-complete", Timeout: 10},
+			{Name: "StopFailure", Event: "attention-required", Timeout: 10},
+			{Name: "PermissionRequest", Event: "approval-required", Timeout: 10},
+		}
 	case "gemini":
 		return []hookSpec{{Name: "AfterAgent", Event: "turn-complete", Timeout: 10000}}
 	case "droid":
@@ -663,7 +688,7 @@ func isOwnedCommandWithFlag(command, agent, event, flag string) bool {
 	quote := command[0]
 	separator := string(quote) + " notify --agent "
 	separatorIndex := strings.LastIndex(command, separator)
-	if separatorIndex <= 0 {
+	if separatorIndex <= 0 || !isCanonicalQuotedArgument(command[:separatorIndex+1], quote) {
 		return false
 	}
 	tail := command[separatorIndex+2:]
@@ -675,7 +700,7 @@ func isOwnedCommandWithFlag(command, agent, event, flag string) bool {
 		return true
 	}
 	configValue, ok := strings.CutPrefix(tail, base+" --config ")
-	return ok && len(configValue) >= 2 && configValue[0] == quote && configValue[len(configValue)-1] == quote
+	return ok && isCanonicalQuotedArgument(configValue, quote)
 }
 
 func hookMatches(got map[string]any, want hookCommand) bool {

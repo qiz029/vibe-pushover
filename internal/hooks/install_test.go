@@ -80,28 +80,31 @@ func TestDefaultPathsForAdditionalAgents(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "~/.xdg")
 
 	tests := map[string]string{
-		"aider":     filepath.Join(home, ".aider.conf.yml"),
-		"amp":       filepath.Join(home, ".config", "amp", "plugins", "vibe-pushover.ts"),
-		"auggie":    filepath.Join(home, ".augment", "settings.json"),
-		"cline":     filepath.Join(home, "Documents", "Cline", "Hooks", "TaskComplete"),
-		"copilot":   filepath.Join(home, "copilot-home", "hooks", "vibe-pushover.json"),
-		"cortex":    filepath.Join(home, ".snowflake", "cortex", "hooks.json"),
-		"droid":     filepath.Join(home, ".factory", "settings.json"),
-		"gemini":    filepath.Join(home, "gemini-home", ".gemini", "settings.json"),
-		"goose":     filepath.Join(home, ".agents", "plugins", "vibe-pushover"),
-		"hermes":    filepath.Join(home, ".hermes", "config.yaml"),
-		"kiro":      filepath.Join(home, ".kiro", "hooks", "vibe-pushover.json"),
-		"mimo":      filepath.Join(home, ".xdg", "mimocode", "plugins", "vibe-pushover.ts"),
-		"opencode":  filepath.Join(home, ".xdg", "opencode", "plugins", "vibe-pushover.ts"),
-		"omp":       filepath.Join(home, ".omp", "agent", "extensions", "vibe-pushover", "index.ts"),
-		"openhands": filepath.Join(home, ".openhands", "hooks.json"),
-		"qoder":     filepath.Join(home, ".qoder", "settings.json"),
-		"qwen":      filepath.Join(home, ".qwen", "settings.json"),
-		"rovo":      filepath.Join(home, ".rovodev", "config.yml"),
-		"tabnine":   filepath.Join(home, ".tabnine", "agent", "settings.json"),
-		"trae":      filepath.Join(home, ".trae", "hooks.json"),
-		"vscode":    filepath.Join(home, "copilot-home", "hooks", "vibe-pushover.json"),
-		"windsurf":  filepath.Join(home, ".codeium", "windsurf", "hooks.json"),
+		"aider":       filepath.Join(home, ".aider.conf.yml"),
+		"amp":         filepath.Join(home, ".config", "amp", "plugins", "vibe-pushover.ts"),
+		"antigravity": filepath.Join(home, ".gemini", "antigravity-cli", "plugins", "vibe-pushover"),
+		"auggie":      filepath.Join(home, ".augment", "settings.json"),
+		"cline":       filepath.Join(home, "Documents", "Cline", "Hooks", "TaskComplete"),
+		"codebuddy":   filepath.Join(home, ".codebuddy", "settings.json"),
+		"codewhale":   filepath.Join(home, ".codewhale", "config.toml"),
+		"copilot":     filepath.Join(home, "copilot-home", "hooks", "vibe-pushover.json"),
+		"cortex":      filepath.Join(home, ".snowflake", "cortex", "hooks.json"),
+		"droid":       filepath.Join(home, ".factory", "settings.json"),
+		"gemini":      filepath.Join(home, "gemini-home", ".gemini", "settings.json"),
+		"goose":       filepath.Join(home, ".agents", "plugins", "vibe-pushover"),
+		"hermes":      filepath.Join(home, ".hermes", "config.yaml"),
+		"kiro":        filepath.Join(home, ".kiro", "hooks", "vibe-pushover.json"),
+		"mimo":        filepath.Join(home, ".xdg", "mimocode", "plugins", "vibe-pushover.ts"),
+		"opencode":    filepath.Join(home, ".xdg", "opencode", "plugins", "vibe-pushover.ts"),
+		"omp":         filepath.Join(home, ".omp", "agent", "extensions", "vibe-pushover", "index.ts"),
+		"openhands":   filepath.Join(home, ".openhands", "hooks.json"),
+		"qoder":       filepath.Join(home, ".qoder", "settings.json"),
+		"qwen":        filepath.Join(home, ".qwen", "settings.json"),
+		"rovo":        filepath.Join(home, ".rovodev", "config.yml"),
+		"tabnine":     filepath.Join(home, ".tabnine", "agent", "settings.json"),
+		"trae":        filepath.Join(home, ".trae", "hooks.json"),
+		"vscode":      filepath.Join(home, "copilot-home", "hooks", "vibe-pushover.json"),
+		"windsurf":    filepath.Join(home, ".codeium", "windsurf", "hooks.json"),
 	}
 	for agent, want := range tests {
 		got, err := hooks.DefaultPath(agent)
@@ -2511,6 +2514,120 @@ func TestInstallRovoDevHooksRecognizesQuotedExecutableWithApostrophe(t *testing.
 	}
 	if changed, err := hooks.Install("rovo", path, executable, ""); err != nil || changed {
 		t.Fatalf("second Install() changed=%v error=%v", changed, err)
+	}
+}
+
+func TestInstallCodeBuddyPreservesThirdPartyCompoundCommand(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".codebuddy", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	compound := "'/usr/bin/prepare' && '/old/bin/vibe-pushover' notify --agent codebuddy --event turn-complete --ignore-errors"
+	original := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":` + strconv.Quote(compound) + `}]}]}}`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := hooks.Install("codebuddy", path, "/new/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !bytes.Contains(data, []byte("'/usr/bin/prepare'")) || !bytes.Contains(data, []byte("'/old/bin/vibe-pushover'")) {
+		t.Fatalf("third-party compound command was overwritten:\n%s", data)
+	}
+	if !bytes.Contains(data, []byte("'/new/bin/vibe-pushover' notify --agent codebuddy --event turn-complete")) {
+		t.Fatalf("managed CodeBuddy command was not appended:\n%s", data)
+	}
+}
+
+func TestInstallCodeWhaleRefusesConflictingManagedName(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	original := `[[hooks.hooks]]
+name = "vibe-pushover-turn-complete"
+event = "turn_end"
+command = "./third-party.sh"
+`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := hooks.Install("codewhale", path, "/opt/bin/vibe-pushover", ""); err == nil {
+		t.Fatal("Install() accepted a conflicting CodeWhale hook name")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(after) != original {
+		t.Fatalf("refused install changed CodeWhale config:\n%s", after)
+	}
+}
+
+func TestInstallCodeWhalePreservesConfigSymlink(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "dotfiles", "codewhale.toml")
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(target, []byte("provider = \"deepseek\"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	path := filepath.Join(dir, "config.toml")
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+	if _, err := hooks.Install("codewhale", path, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("Lstat() error = %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("CodeWhale config symlink was replaced")
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("ReadFile(target) error = %v", err)
+	}
+	if !bytes.Contains(data, []byte(`event = "turn_end"`)) {
+		t.Fatalf("CodeWhale symlink target was not updated:\n%s", data)
+	}
+}
+
+func TestInstallCodeWhaleIgnoresMarkersInsideMultilineString(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	original := `note = '''
+# BEGIN vibe-pushover hook: vibe-pushover-turn-complete
+not a managed block
+# END vibe-pushover hook: vibe-pushover-turn-complete
+'''
+`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := hooks.Install("codewhale", path, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var root map[string]any
+	if err := toml.Unmarshal(data, &root); err != nil {
+		t.Fatalf("Unmarshal() error = %v\n%s", err, data)
+	}
+	if root["note"] != "# BEGIN vibe-pushover hook: vibe-pushover-turn-complete\nnot a managed block\n# END vibe-pushover hook: vibe-pushover-turn-complete\n" {
+		t.Fatalf("multiline string changed: %#v", root["note"])
 	}
 }
 

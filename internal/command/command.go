@@ -362,6 +362,7 @@ func previewCommand(options Options) *cli.Command {
 			&cli.StringFlag{Name: "agent", Usage: "source agent name", Required: true},
 			&cli.StringFlag{Name: "event", Usage: "turn-complete, approval-required, or attention-required", Required: true},
 			&cli.StringFlag{Name: "profile", Usage: "notification profile: balanced, quiet, urgent, or watch", Value: "balanced"},
+			configFlag(),
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			payload, err := readPayload(options.Stdin)
@@ -374,6 +375,17 @@ func previewCommand(options Options) *cli.Command {
 				return err
 			}
 			profile := strings.ToLower(strings.TrimSpace(cmd.String("profile")))
+			var credentials config.Credentials
+			configured := cmd.String("config") != ""
+			if configured {
+				credentials, err = config.Load(cmd.String("config"))
+				if err != nil {
+					return err
+				}
+				if !cmd.IsSet("profile") {
+					profile = credentials.NotificationProfile
+				}
+			}
 			if !notification.ShouldDeliver(event, profile) {
 				_, err = fmt.Fprintf(options.Stdout, "Delivery: suppressed by %s profile\n", profile)
 				return err
@@ -381,6 +393,10 @@ func previewCommand(options Options) *cli.Command {
 			message, err = notification.ApplyProfile(message, event, profile)
 			if err != nil {
 				return err
+			}
+			if configured {
+				credentials.NotificationProfile = profile
+				message = applyConfiguredSound(message, event, credentials)
 			}
 			_, err = fmt.Fprintf(options.Stdout,
 				"Title: %s\nBody: %s\nPriority: %d\nSound: %s\nTTL: %s\n",
@@ -466,6 +482,9 @@ func installCommand(options Options) *cli.Command {
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			agent := strings.ToLower(strings.TrimSpace(cmd.String("agent")))
+			if agent == "deepseek" {
+				agent = "codewhale"
+			}
 			pushoverConfig := cmd.String("config")
 			if pushoverConfig != "" {
 				var err error
@@ -815,7 +834,7 @@ func hasUsableWorkspace(payload map[string]any) bool {
 			return true
 		}
 	}
-	for _, key := range []string{"workspace_roots", "workspaceRoots"} {
+	for _, key := range []string{"workspace_roots", "workspaceRoots", "workspacePaths"} {
 		switch roots := payload[key].(type) {
 		case []any:
 			for _, root := range roots {

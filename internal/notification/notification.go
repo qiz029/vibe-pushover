@@ -203,7 +203,7 @@ func payloadWorkingDirectory(payload map[string]any) string {
 	if workspace := firstString(payload, "workspaceRoot", "workspace_root", "workspace"); workspace != "" {
 		return workspace
 	}
-	for _, key := range []string{"workspace_roots", "workspaceRoots"} {
+	for _, key := range []string{"workspace_roots", "workspaceRoots", "workspacePaths"} {
 		if roots, ok := payload[key].([]any); ok && len(roots) > 0 {
 			for _, raw := range roots {
 				if root, ok := raw.(string); ok && strings.TrimSpace(root) != "" {
@@ -245,6 +245,9 @@ func firstLine(value string) string {
 
 func displayName(value string) string {
 	if name, ok := map[string]string{
+		"antigravity":   "Antigravity",
+		"codebuddy":     "CodeBuddy",
+		"codewhale":     "CodeWhale",
 		"cortex":        "Cortex Code",
 		"grok":          "Grok Build",
 		"mimo":          "MiMo Code",

@@ -1282,6 +1282,55 @@ func TestPreviewCommandShowsNotificationWithoutCredentials(t *testing.T) {
 	}
 }
 
+func TestPreviewCommandUsesConfiguredProfileAndEventSound(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", NotificationProfile: "watch", TurnCompleteSound: "magic",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin: bytes.NewBufferString(`{"workspacePaths":["/tmp/demo"]}`), Stdout: &stdout, Stderr: &bytes.Buffer{},
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "preview", "--agent", "antigravity", "--event", "turn-complete", "--config", path,
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, want := range []string{"✓ Antigravity finished · demo", "Priority: 0", "Sound: magic"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("preview output does not contain %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
+func TestPreviewCommandExplicitQuietProfileOverridesConfiguredSound(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", NotificationProfile: "watch", TurnCompleteSound: "magic",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin: bytes.NewBufferString(`{"cwd":"/tmp/demo"}`), Stdout: &stdout, Stderr: &bytes.Buffer{},
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "preview", "--agent", "codex", "--event", "turn-complete",
+		"--config", path, "--profile", "quiet",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Sound: none") {
+		t.Fatalf("explicit quiet profile did not override configured sound:\n%s", stdout.String())
+	}
+}
+
 func TestPreviewCommandShowsUrgentProfileCompletionIsSuppressed(t *testing.T) {
 	t.Parallel()
 
@@ -1376,7 +1425,7 @@ func TestAgentsCommandShowsCapabilities(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"aider", "amp", "auggie", "claude", "cline", "codex", "copilot", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "kimi", "kiro", "mimo", "mistral", "omp", "openhands", "opencode", "pi", "qoder", "qwen", "rovo", "tabnine", "trae", "vscode", "windsurf",
+		"aider", "amp", "antigravity", "auggie", "claude", "cline", "codebuddy", "codewhale", "codex", "copilot", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "kimi", "kiro", "mimo", "mistral", "omp", "openhands", "opencode", "pi", "qoder", "qwen", "rovo", "tabnine", "trae", "vscode", "windsurf",
 		"completion+approval", "completion+approval+attention", "completion+attention", "completion only",
 	} {
 		if !strings.Contains(output, want) {
@@ -1823,6 +1872,83 @@ func TestInstallCommandCreatesKimiHooks(t *testing.T) {
 	}
 }
 
+func TestInstallCommandCreatesCodeWhaleLifecycleHooks(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	original := `# Keep this comment
+provider = "deepseek"
+
+[[hooks.hooks]]
+name = "third-party"
+event = "session_start"
+command = "./prepare.sh"
+`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	app := command.New(command.Options{
+		Stdout:     &bytes.Buffer{},
+		Stderr:     &bytes.Buffer{},
+		Executable: "/opt/bin/vibe-pushover",
+	})
+	args := []string{
+		"vibe-pushover", "install",
+		"--agent", "codewhale",
+		"--agent-config", path,
+	}
+	if err := app.Run(context.Background(), args); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	first, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	for _, want := range []string{
+		"# Keep this comment",
+		`name = "third-party"`,
+		`event = "turn_end"`,
+		`event = "on_error"`,
+		`--agent codewhale --event turn-complete`,
+		`--agent codewhale --event attention-required`,
+	} {
+		if !bytes.Contains(first, []byte(want)) {
+			t.Fatalf("CodeWhale config does not contain %q:\n%s", want, first)
+		}
+	}
+	if err := app.Run(context.Background(), args); err != nil {
+		t.Fatalf("second Run() error = %v", err)
+	}
+	second, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("second ReadFile() error = %v", err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Fatalf("CodeWhale install is not idempotent:\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+}
+
+func TestInstallCommandAcceptsDeepSeekAlias(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	app := command.New(command.Options{
+		Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Executable: "/opt/bin/vibe-pushover",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "install", "--agent", "DeepSeek", "--agent-config", path,
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !bytes.Contains(data, []byte("--agent codewhale --event turn-complete")) {
+		t.Fatalf("DeepSeek alias did not install canonical CodeWhale hooks:\n%s", data)
+	}
+}
+
 func TestInstallCommandCreatesOpenHandsCompletionHook(t *testing.T) {
 	t.Parallel()
 
@@ -1932,6 +2058,100 @@ func TestInstallCommandCreatesRovoDevLifecycleHooks(t *testing.T) {
 	}
 	if !bytes.Equal(after, data) {
 		t.Fatalf("second install changed Rovo Dev config:\n%s", after)
+	}
+}
+
+func TestInstallCommandCreatesCodeBuddyLifecycleHooks(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".codebuddy", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	original := `{"theme":"dark","hooks":{"Stop":[{"hooks":[{"type":"command","command":"./existing-notifier.sh"}]}]}}`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Executable: "/opt/bin/vibe-pushover",
+	})
+	args := []string{"vibe-pushover", "install", "--agent", "codebuddy", "--agent-config", path}
+	if err := app.Run(context.Background(), args); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	for _, want := range []string{
+		`"theme": "dark"`,
+		`"command": "./existing-notifier.sh"`,
+		`"Stop"`,
+		`"StopFailure"`,
+		`"PermissionRequest"`,
+		"notify --agent codebuddy --event turn-complete --ignore-errors",
+		"notify --agent codebuddy --event attention-required --ignore-errors",
+		"notify --agent codebuddy --event approval-required --ignore-errors",
+	} {
+		if !bytes.Contains(data, []byte(want)) {
+			t.Fatalf("CodeBuddy settings do not contain %q:\n%s", want, data)
+		}
+	}
+	before := append([]byte(nil), data...)
+	if err := app.Run(context.Background(), args); err != nil {
+		t.Fatalf("second Run() error = %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(after second install) error = %v", err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatalf("second install changed CodeBuddy settings:\n%s", after)
+	}
+}
+
+func TestInstallCommandCreatesAntigravityCompletionPlugin(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".gemini", "antigravity-cli", "plugins", "vibe-pushover")
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Executable: "/opt/bin/vibe-pushover",
+	})
+	args := []string{"vibe-pushover", "install", "--agent", "antigravity", "--agent-config", path}
+	if err := app.Run(context.Background(), args); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	manifest, err := os.ReadFile(filepath.Join(path, "plugin.json"))
+	if err != nil {
+		t.Fatalf("ReadFile(plugin.json) error = %v", err)
+	}
+	if !bytes.Contains(manifest, []byte(`"name": "vibe-pushover"`)) {
+		t.Fatalf("Antigravity plugin manifest is unexpected:\n%s", manifest)
+	}
+	hookPath := filepath.Join(path, "hooks.json")
+	hookData, err := os.ReadFile(hookPath)
+	if err != nil {
+		t.Fatalf("ReadFile(hooks.json) error = %v", err)
+	}
+	for _, want := range []string{
+		`"vibe-pushover"`, `"Stop"`, `"type": "command"`, `"timeout": 10`,
+		"notify --agent antigravity --event turn-complete --ignore-errors",
+	} {
+		if !bytes.Contains(hookData, []byte(want)) {
+			t.Fatalf("Antigravity hooks do not contain %q:\n%s", want, hookData)
+		}
+	}
+	before := append([]byte(nil), hookData...)
+	if err := app.Run(context.Background(), args); err != nil {
+		t.Fatalf("second Run() error = %v", err)
+	}
+	after, err := os.ReadFile(hookPath)
+	if err != nil {
+		t.Fatalf("ReadFile(after second install) error = %v", err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatalf("second install changed Antigravity hooks:\n%s", after)
 	}
 }
 
