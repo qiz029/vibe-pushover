@@ -14,6 +14,7 @@ import (
 var supportedAgents = map[string]struct{}{
 	"claude": {},
 	"codex":  {},
+	"kimi":   {},
 	"pi":     {},
 }
 
@@ -29,6 +30,15 @@ type hookGroup struct {
 }
 
 func DefaultPath(agent string) (string, error) {
+	if agent == "kimi" {
+		if dataDir := os.Getenv("KIMI_CODE_HOME"); dataDir != "" {
+			dataDir, err := expandHome(dataDir)
+			if err != nil {
+				return "", fmt.Errorf("resolve Kimi Code home: %w", err)
+			}
+			return filepath.Join(dataDir, "config.toml"), nil
+		}
+	}
 	if agent == "pi" {
 		if agentDir := os.Getenv("PI_CODING_AGENT_DIR"); agentDir != "" {
 			agentDir, err := expandHome(agentDir)
@@ -48,10 +58,12 @@ func DefaultPath(agent string) (string, error) {
 		return filepath.Join(home, ".codex", "hooks.json"), nil
 	case "claude":
 		return filepath.Join(home, ".claude", "settings.json"), nil
+	case "kimi":
+		return filepath.Join(home, ".kimi-code", "config.toml"), nil
 	case "pi":
 		return filepath.Join(home, ".pi", "agent", "extensions", "vibe-pushover", "index.ts"), nil
 	default:
-		return "", fmt.Errorf("unsupported agent %q (supported: codex, claude, pi)", agent)
+		return "", fmt.Errorf("unsupported agent %q (supported: codex, claude, kimi, pi)", agent)
 	}
 }
 
@@ -71,13 +83,16 @@ func expandHome(path string) (string, error) {
 
 func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	if _, ok := supportedAgents[agent]; !ok {
-		return false, fmt.Errorf("unsupported agent %q (supported: codex, claude, pi)", agent)
+		return false, fmt.Errorf("unsupported agent %q (supported: codex, claude, kimi, pi)", agent)
 	}
 	if strings.TrimSpace(executable) == "" {
 		return false, errors.New("executable path is required")
 	}
 	if agent == "pi" {
 		return installPiExtension(path, executable, pushoverConfig)
+	}
+	if agent == "kimi" {
+		return installKimiHooks(path, executable, pushoverConfig)
 	}
 
 	root, err := readRoot(path)

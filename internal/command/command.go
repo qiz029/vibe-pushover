@@ -88,7 +88,7 @@ func installCommand(options Options) *cli.Command {
 		Name:  "install",
 		Usage: "install notification hooks or an extension for a local agent",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "agent", Usage: "agent to configure: codex, claude, or pi", Required: true},
+			&cli.StringFlag{Name: "agent", Usage: "agent to configure: codex, claude, kimi, or pi", Required: true},
 			&cli.StringFlag{Name: "agent-config", Usage: "override the agent hook or extension path"},
 			&cli.StringFlag{Name: "binary", Usage: "override the vibe-pushover executable path", Value: options.Executable},
 			configFlag(),
@@ -138,6 +138,8 @@ func notifyCommand(options Options) *cli.Command {
 			&cli.StringFlag{Name: "agent", Usage: "source agent name", Required: true},
 			&cli.StringFlag{Name: "event", Usage: "turn-complete or approval-required", Required: true},
 			&cli.BoolFlag{Name: "ignore-errors", Usage: "log delivery failures without failing the hook"},
+			// Kept as a no-op so hooks installed by the pre-Kimi release candidate keep working.
+			&cli.BoolFlag{Name: "skip-active-stop", Hidden: true},
 			configFlag(),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {

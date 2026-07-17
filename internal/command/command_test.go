@@ -100,14 +100,14 @@ func TestNotifyCommandSendsHookPayload(t *testing.T) {
 	err := app.Run(context.Background(), []string{
 		"vibe-pushover", "notify",
 		"--config", path,
-		"--agent", "codex",
+		"--agent", "kimi",
 		"--event", "approval-required",
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	got := received
-	if got["title"] != "⚠ Codex needs approval · demo" {
+	if got["title"] != "⚠ Kimi needs approval · demo" {
 		t.Fatalf("title = %q", got["title"])
 	}
 	if got["message"] != "Bash\nmake deploy" {
@@ -121,6 +121,83 @@ func TestNotifyCommandSendsHookPayload(t *testing.T) {
 	}
 	if got["ttl"] != "1800" {
 		t.Fatalf("ttl = %q, want 1800", got["ttl"])
+	}
+}
+
+func TestNotifyCommandSendsKimiStopFallback(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var title, message string
+	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("ParseForm() error = %v", err)
+		}
+		title = r.Form.Get("title")
+		message = r.Form.Get("message")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"status":1,"request":"request-id"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	app := command.New(command.Options{
+		Stdin:      bytes.NewBufferString(`{"hook_event_name":"Stop","cwd":"/tmp/demo","stop_hook_active":false}`),
+		Stdout:     &bytes.Buffer{},
+		Stderr:     &bytes.Buffer{},
+		HTTPClient: httpClient,
+		Endpoint:   "https://pushover.test/messages.json",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "notify",
+		"--config", path,
+		"--agent", "kimi",
+		"--event", "turn-complete",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if title != "✓ Kimi finished · demo" {
+		t.Fatalf("title = %q", title)
+	}
+	if message != "Turn completed." {
+		t.Fatalf("message = %q, want fallback body", message)
+	}
+}
+
+func TestNotifyCommandAcceptsLegacySkipActiveStopFlag(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	requests := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"status":1,"request":"request-id"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	app := command.New(command.Options{
+		Stdin:      bytes.NewBufferString(`{"hook_event_name":"Stop","stop_hook_active":true}`),
+		Stdout:     &bytes.Buffer{},
+		Stderr:     &bytes.Buffer{},
+		HTTPClient: httpClient,
+		Endpoint:   "https://pushover.test/messages.json",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--config", path, "--agent", "kimi",
+		"--event", "turn-complete", "--skip-active-stop",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
 	}
 }
 
@@ -177,6 +254,34 @@ func TestInstallCommandCreatesPiExtension(t *testing.T) {
 	}
 	if !bytes.Contains(data, []byte(`pi.on("agent_settled"`)) {
 		t.Fatalf("Pi extension does not register agent_settled: %s", data)
+	}
+}
+
+func TestInstallCommandCreatesKimiHooks(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	app := command.New(command.Options{
+		Stdout:     &bytes.Buffer{},
+		Stderr:     &bytes.Buffer{},
+		Executable: "/opt/bin/vibe-pushover",
+	})
+	err := app.Run(context.Background(), []string{
+		"vibe-pushover", "install",
+		"--agent", "KIMI",
+		"--agent-config", path,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	for _, want := range []string{`event = "Stop"`, `event = "PermissionRequest"`, `--agent kimi`} {
+		if !bytes.Contains(data, []byte(want)) {
+			t.Fatalf("Kimi config does not contain %q: %s", want, data)
+		}
 	}
 }
 

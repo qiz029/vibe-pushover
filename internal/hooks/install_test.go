@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/pelletier/go-toml/v2"
 	"github.com/qiz029/vibe-pushover/internal/hooks"
 )
 
@@ -21,6 +22,35 @@ func TestDefaultPathPiHonorsAgentDir(t *testing.T) {
 		t.Fatalf("DefaultPath() error = %v", err)
 	}
 	want := filepath.Join(dir, "extensions", "vibe-pushover", "index.ts")
+	if got != want {
+		t.Fatalf("DefaultPath() = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultPathKimiUsesKimiCodeConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	got, err := hooks.DefaultPath("kimi")
+	if err != nil {
+		t.Fatalf("DefaultPath() error = %v", err)
+	}
+	want := filepath.Join(home, ".kimi-code", "config.toml")
+	if got != want {
+		t.Fatalf("DefaultPath() = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultPathKimiHonorsKimiCodeHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("KIMI_CODE_HOME", "~/custom-kimi")
+
+	got, err := hooks.DefaultPath("kimi")
+	if err != nil {
+		t.Fatalf("DefaultPath() error = %v", err)
+	}
+	want := filepath.Join(home, "custom-kimi", "config.toml")
 	if got != want {
 		t.Fatalf("DefaultPath() = %q, want %q", got, want)
 	}
@@ -68,6 +98,240 @@ func TestInstallAddsCodexHooks(t *testing.T) {
 	}
 	if len(got.Hooks["PermissionRequest"]) != 1 {
 		t.Fatalf("PermissionRequest hook count = %d, want 1", len(got.Hooks["PermissionRequest"]))
+	}
+}
+
+func TestInstallAddsKimiHooksAndPreservesConfig(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".kimi-code", "config.toml")
+	original := `theme = "dark"
+
+[[hooks]]
+event = "StopFailure"
+command = "existing-hook"
+timeout = 10
+`
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	changed, err := hooks.Install("kimi", path, "/opt/bin/vibe-pushover", "/tmp/pushover config.json")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	for _, want := range []string{
+		original,
+		`event = "Stop"`,
+		`--agent kimi --event turn-complete --ignore-errors --config '/tmp/pushover config.json'`,
+		`event = "PermissionRequest"`,
+		`--agent kimi --event approval-required --ignore-errors --config '/tmp/pushover config.json'`,
+	} {
+		if !bytes.Contains(data, []byte(want)) {
+			t.Fatalf("Kimi config does not contain %q:\n%s", want, data)
+		}
+	}
+	if got := bytes.Count(data, []byte("[[hooks]]")); got != 3 {
+		t.Fatalf("hook count = %d, want 3", got)
+	}
+}
+
+func TestInstallKimiHooksIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if _, err := hooks.Install("kimi", path, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("first Install() error = %v", err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	changed, err := hooks.Install("kimi", path, "/opt/bin/vibe-pushover", "")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed = true, want false")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("second Install() rewrote the Kimi config")
+	}
+}
+
+func TestInstallKimiHooksConvertsInlineHooksAndPreservesEntries(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	original := []byte(`# keep this comment
+theme = "dark"
+hooks = [
+  { event = "StopFailure", command = "echo '] # still a string'", timeout = 10 }, # keep hook
+]
+`)
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if _, err := hooks.Install("kimi", path, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !bytes.Contains(data, []byte("# keep this comment")) {
+		t.Fatalf("Install() dropped unrelated comments:\n%s", data)
+	}
+	var got struct {
+		Theme string `toml:"theme"`
+		Hooks []struct {
+			Event   string `toml:"event"`
+			Command string `toml:"command"`
+			Timeout int    `toml:"timeout"`
+		} `toml:"hooks"`
+	}
+	if err := toml.Unmarshal(data, &got); err != nil {
+		t.Fatalf("generated config is invalid TOML: %v\n%s", err, data)
+	}
+	if got.Theme != "dark" {
+		t.Fatalf("theme = %q, want dark", got.Theme)
+	}
+	if len(got.Hooks) != 3 {
+		t.Fatalf("hook count = %d, want 3", len(got.Hooks))
+	}
+	if got.Hooks[0].Event != "StopFailure" || got.Hooks[0].Command != "echo '] # still a string'" || got.Hooks[0].Timeout != 10 {
+		t.Fatalf("existing hook was not preserved: %#v", got.Hooks[0])
+	}
+	if !bytes.Contains(data, []byte("# keep hook")) {
+		t.Fatalf("inline hook comment was removed:\n%s", data)
+	}
+	changed, err := hooks.Install("kimi", path, "/opt/bin/vibe-pushover", "")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed inline hooks")
+	}
+}
+
+func TestInstallKimiHooksConvertsEmptyInlineHooks(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("hooks = []\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := hooks.Install("kimi", path, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var got struct {
+		Hooks []map[string]any `toml:"hooks"`
+	}
+	if err := toml.Unmarshal(data, &got); err != nil {
+		t.Fatalf("generated config is invalid TOML: %v\n%s", err, data)
+	}
+	if len(got.Hooks) != 2 {
+		t.Fatalf("hook count = %d, want 2", len(got.Hooks))
+	}
+}
+
+func TestInstallKimiHooksRecognizesQuotedArrayTable(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	original := []byte("[[\"hooks\"]]\nevent = \"StopFailure\"\ncommand = \"echo keep\"\n")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := hooks.Install("kimi", path, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !bytes.Contains(data, original) || bytes.Count(data, []byte("[[hooks]]")) != 2 {
+		t.Fatalf("quoted existing hook was not preserved:\n%s", data)
+	}
+}
+
+func TestInstallKimiHooksIgnoresHookHeaderInsideMultilineString(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	original := []byte("note = '''\n[[hooks]]\n'''\nhooks = []\n")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := hooks.Install("kimi", path, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var parsed map[string]any
+	if err := toml.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("generated config is invalid: %v\n%s", err, data)
+	}
+	hookList, ok := parsed["hooks"].([]any)
+	if !ok || len(hookList) != 2 {
+		t.Fatalf("hooks = %#v, want two installed hooks", parsed["hooks"])
+	}
+}
+
+func TestInstallKimiHooksPreservesConfigSymlink(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "dotfiles", "kimi.toml")
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(target, []byte("theme = \"dark\"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	path := filepath.Join(dir, "config.toml")
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+
+	if _, err := hooks.Install("kimi", path, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("Lstat() error = %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("Install() replaced the Kimi config symlink")
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("ReadFile(target) error = %v", err)
+	}
+	if !bytes.Contains(data, []byte(`event = "Stop"`)) {
+		t.Fatalf("symlink target was not updated: %s", data)
 	}
 }
 

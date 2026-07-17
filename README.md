@@ -5,7 +5,7 @@
 - finishes a turn;
 - needs manual approval.
 
-The CLI currently installs hooks for Codex CLI and Claude Code, plus a Pi extension. It is written in Go and uses [`urfave/cli`](https://github.com/urfave/cli).
+The CLI currently installs hooks for Codex CLI, Claude Code, and Kimi Code CLI, plus a Pi extension. It is written in Go and uses [`urfave/cli`](https://github.com/urfave/cli).
 
 ## Install
 
@@ -74,23 +74,30 @@ Claude Code:
 vibe-pushover install --agent claude
 ```
 
+Kimi Code CLI:
+
+```sh
+vibe-pushover install --agent kimi
+```
+
 Pi:
 
 ```sh
 vibe-pushover install --agent pi
 ```
 
-For Codex and Claude, the installer adds `Stop` and `PermissionRequest` command hooks. For Pi, it installs a global extension that sends a notification on `agent_settled`, after automatic retries, compaction, and queued follow-ups are finished. It preserves existing settings and hooks, and repeated installs are idempotent. Defaults:
+For Codex, Claude, and Kimi, the installer adds `Stop` and `PermissionRequest` command hooks. For Pi, it installs a global extension that sends a notification on `agent_settled`, after automatic retries, compaction, and queued follow-ups are finished. It preserves existing settings and hooks, and repeated installs are idempotent. Defaults:
 
 | Agent | Config file |
 | --- | --- |
 | Codex CLI | `~/.codex/hooks.json` |
 | Claude Code | `~/.claude/settings.json` |
+| Kimi Code CLI | `$KIMI_CODE_HOME/config.toml` when set; otherwise `~/.kimi-code/config.toml` |
 | Pi | `$PI_CODING_AGENT_DIR/extensions/vibe-pushover/index.ts` when set; otherwise `~/.pi/agent/extensions/vibe-pushover/index.ts` |
 
 Use `--agent-config PATH` to target another agent settings file or `--binary PATH` when installing a binary that is not the currently running executable. If credentials were written with `setup --config PATH`, pass the same path to `install --config PATH`; it will be embedded in both installed hook commands.
 
-Restart the agent after installation. Codex may ask you to trust the newly added local hooks before it runs them.
+Restart the agent after installation. Codex may ask you to trust the newly added local hooks before it runs them. Kimi loads the new TOML hooks when a new session starts; its `Stop` event does not include the final assistant message, so the completion notification uses the compact fallback body `Turn completed.`. Kimi exposes `Stop` just before the turn ends and runs hooks in parallel. If another Kimi `Stop` hook blocks the turn, the notification may arrive before that continuation finishes because Kimi does not expose a later turn-ended hook.
 
 Pi deliberately has no built-in permission popups, so its integration currently sends turn-complete notifications only. `vibe-pushover` does not add a confirmation policy or turn every Pi tool call into a manual approval.
 
