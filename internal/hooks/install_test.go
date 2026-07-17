@@ -273,6 +273,33 @@ func TestDetectedAgentsFindsAdditionalOfficialCLICommands(t *testing.T) {
 	}
 }
 
+func TestDetectedRunAgentsFindsWrapperCLIs(t *testing.T) {
+	binDir := t.TempDir()
+	for _, name := range []string{"cn", "crush", "pdx"} {
+		path := filepath.Join(binDir, name)
+		if runtime.GOOS == "windows" {
+			path += ".exe"
+		}
+		if err := os.WriteFile(path, nil, 0o755); err != nil {
+			t.Fatalf("WriteFile(%q) error = %v", path, err)
+		}
+	}
+	t.Setenv("PATH", binDir)
+	if runtime.GOOS == "windows" {
+		t.Setenv("PATHEXT", ".EXE")
+	}
+
+	detected := hooks.DetectedRunAgents()
+	got := make([]string, 0, len(detected))
+	for _, agent := range detected {
+		got = append(got, agent.Name)
+	}
+	want := []string{"continue", "crush", "plandex"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DetectedRunAgents() = %#v, want %#v", got, want)
+	}
+}
+
 func TestDetectedAgentsRequiresUnambiguousExecutableWithSharedPiOverride(t *testing.T) {
 	clearDetectionOverrides(t)
 	home := filepath.Join(t.TempDir(), "empty-home")

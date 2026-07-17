@@ -9,7 +9,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -33,6 +35,7 @@ type Options struct {
 	DedupePath        string
 	DefaultConfigPath string
 	Now               func() time.Time
+	RunProcess        func(context.Context, []string, io.Reader, io.Writer, io.Writer) error
 }
 
 func New(options Options) *cli.Command {
@@ -45,6 +48,7 @@ func New(options Options) *cli.Command {
 		Reader:                options.Stdin,
 		Writer:                options.Stdout,
 		ErrWriter:             options.Stderr,
+		ExitErrHandler:        func(context.Context, *cli.Command, error) {},
 		Commands: []*cli.Command{
 			setupCommand(options),
 			statusCommand(options),
@@ -58,11 +62,132 @@ func New(options Options) *cli.Command {
 			soundCommand(options),
 			agentsCommand(options),
 			installCommand(options),
+			runCommand(options),
 			previewCommand(options),
 			notifyCommand(options),
 			testCommand(options),
 		},
 	}
+}
+
+func runCommand(options Options) *cli.Command {
+	return &cli.Command{
+		Name:      "run",
+		Usage:     "run any coding-agent CLI and notify when its session exits",
+		ArgsUsage: "-- command [args...]",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "agent", Usage: "agent name shown in the notification", Required: true},
+			&cli.DurationFlag{Name: "after", Usage: "notify successful sessions only after this duration", Value: 30 * time.Second},
+			configFlag(),
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			argv := cmd.Args().Slice()
+			if len(argv) == 0 {
+				return errors.New("run requires a command after --")
+			}
+			after := cmd.Duration("after")
+			if after < 0 {
+				return errors.New("--after cannot be negative")
+			}
+
+			started := options.Now()
+			runErr := options.RunProcess(ctx, argv, options.Stdin, options.Stdout, options.Stderr)
+			finished := options.Now()
+			elapsed := finished.Sub(started)
+			if elapsed < 0 {
+				elapsed = 0
+			}
+			if runErr == nil && elapsed < after {
+				return nil
+			}
+
+			event := notification.EventTurnComplete
+			message := fmt.Sprintf("%s finished in %s", filepath.Base(argv[0]), compactDuration(elapsed))
+			if runErr != nil {
+				event = notification.EventAttentionRequired
+				message = fmt.Sprintf("%s exited with status %d after %s", filepath.Base(argv[0]), processExitCode(runErr), compactDuration(elapsed))
+			}
+			cwd, _ := os.Getwd()
+			payload := map[string]any{
+				"cwd":       cwd,
+				"message":   message,
+				"timestamp": finished.Unix(),
+			}
+			if err := deliverNotification(ctx, options, cmd.String("config"), strings.TrimSpace(cmd.String("agent")), event, payload, finished); err != nil {
+				_, _ = fmt.Fprintf(options.Stderr, "vibe-pushover: notification failed: %v\n", err)
+			}
+			return wrapProcessRunError(runErr)
+		},
+	}
+}
+
+type processRunError struct {
+	err    error
+	code   int
+	silent bool
+}
+
+func (e processRunError) Error() string { return e.err.Error() }
+func (e processRunError) Unwrap() error { return e.err }
+func (e processRunError) ExitCode() int { return e.code }
+func (e processRunError) Silent() bool  { return e.silent }
+
+func wrapProcessRunError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var exitCoder interface{ ExitCode() int }
+	var exitError *exec.ExitError
+	return processRunError{
+		err:    err,
+		code:   processExitCode(err),
+		silent: (errors.As(err, &exitCoder) && exitCoder.ExitCode() >= 0) || errors.As(err, &exitError),
+	}
+}
+
+func compactDuration(duration time.Duration) string {
+	if duration < time.Second {
+		return "<1s"
+	}
+	return duration.Round(time.Second).String()
+}
+
+func processExitCode(err error) int {
+	if code, ok := platformSignalExitCode(err); ok {
+		return code
+	}
+	var exitCoder interface{ ExitCode() int }
+	if errors.As(err, &exitCoder) && exitCoder.ExitCode() >= 0 {
+		return exitCoder.ExitCode()
+	}
+	var startError *exec.Error
+	if errors.As(err, &startError) {
+		if errors.Is(startError.Err, exec.ErrNotFound) {
+			return 127
+		}
+		return 126
+	}
+	if errors.Is(err, os.ErrPermission) {
+		return 126
+	}
+	return 1
+}
+
+// ErrorExitCode returns the process status that the CLI should use for err.
+func ErrorExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	return normalizeCLIExitCode(processExitCode(err))
+}
+
+// ShouldPrintError reports whether main should render err after command execution.
+func ShouldPrintError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var silent interface{ Silent() bool }
+	return !errors.As(err, &silent) || !silent.Silent()
 }
 
 func statusCommand(options Options) *cli.Command {
@@ -701,7 +826,11 @@ func agentsCommand(options Options) *cli.Command {
 				if err != nil {
 					return err
 				}
+				agents = append(agents, hooks.DetectedRunAgents()...)
+			} else {
+				agents = append(agents, hooks.RunAgents()...)
 			}
+			sort.Slice(agents, func(i, j int) bool { return agents[i].Name < agents[j].Name })
 			if _, err := fmt.Fprintln(options.Stdout, "AGENT      CAPABILITIES                    INTEGRATION"); err != nil {
 				return err
 			}
@@ -921,7 +1050,11 @@ func installCommand(options Options) *cli.Command {
 			if err != nil {
 				return err
 			}
+			runAgents := hooks.DetectedRunAgents()
 			if len(agents) == 0 {
+				if len(runAgents) > 0 {
+					return printRunWrapperDetection(options.Stdout, runAgents)
+				}
 				_, err = fmt.Fprintln(options.Stdout, "No supported agent installations detected")
 				return err
 			}
@@ -931,12 +1064,33 @@ func installCommand(options Options) *cli.Command {
 					installErrors = append(installErrors, fmt.Errorf("install %s: %w", info.Name, err))
 				}
 			}
+			if len(runAgents) > 0 {
+				if err := printRunWrapperDetection(options.Stdout, runAgents); err != nil {
+					installErrors = append(installErrors, err)
+				}
+			}
 			return errors.Join(installErrors...)
 		},
 	}
 }
 
+func printRunWrapperDetection(stdout io.Writer, agents []hooks.AgentInfo) error {
+	names := make([]string, 0, len(agents))
+	for _, agent := range agents {
+		names = append(names, agent.Name)
+	}
+	_, err := fmt.Fprintf(stdout, "Run-wrapper agents need no installation: %s\n", strings.Join(names, ", "))
+	return err
+}
+
 func installAgent(stdout io.Writer, agent, agentConfig, executable, pushoverConfig string) error {
+	if hooks.IsRunAgent(agent) {
+		commandName := agent
+		if agent == "continue" {
+			commandName = "cn"
+		}
+		return fmt.Errorf("%s uses the run wrapper instead of an installed hook; use: vibe-pushover run --agent %s -- %s", agent, agent, commandName)
+	}
 	paths := []string{agentConfig}
 	if paths[0] == "" {
 		var err error
@@ -1090,48 +1244,7 @@ func notifyCommand(options Options) *cli.Command {
 				}
 			}
 			event := notification.Event(cmd.String("event"))
-			message, err := notification.Build(cmd.String("agent"), event, payload)
-			if err == nil {
-				path, pathErr := configPath(cmd.String("config"))
-				if pathErr != nil {
-					err = pathErr
-				} else {
-					credentials, loadErr := config.Load(path)
-					if loadErr != nil {
-						err = loadErr
-					} else if credentials.IsSilenced(cmd.String("agent"), string(event), notification.ProjectName(payload)) {
-						return nil
-					} else if credentials.IsSnoozed(options.Now()) {
-						return nil
-					} else if event == notification.EventTurnComplete && (credentials.IsFocused(options.Now()) || credentials.IsQuietHours(options.Now())) {
-						return nil
-					} else if !notification.ShouldDeliver(event, credentials.NotificationProfile) {
-						return nil
-					} else {
-						message, err = applyNotificationPreferences(message, event, credentials)
-						if err == nil {
-							fingerprint := notificationFingerprint(cmd.String("agent"), event, notificationDestination(credentials), payload, message)
-							store := dedupe.Store{Path: options.DedupePath, Now: options.Now}
-							reservation, duplicate, dedupeErr := reserveNotification(store, fingerprint)
-							if dedupeErr != nil {
-								_, _ = fmt.Fprintf(options.Stderr, "vibe-pushover: dedupe unavailable: %v\n", dedupeErr)
-							} else if duplicate {
-								return nil
-							}
-							err = sendWithCredentials(ctx, options, credentials, message)
-							if reservation.Token != "" {
-								if err == nil {
-									if commitErr := store.Commit(reservation); commitErr != nil {
-										_, _ = fmt.Fprintf(options.Stderr, "vibe-pushover: dedupe commit failed: %v\n", commitErr)
-									}
-								} else if releaseErr := store.Release(reservation); releaseErr != nil {
-									_, _ = fmt.Fprintf(options.Stderr, "vibe-pushover: dedupe release failed: %v\n", releaseErr)
-								}
-							}
-						}
-					}
-				}
-			}
+			err = deliverNotification(ctx, options, cmd.String("config"), cmd.String("agent"), event, payload, options.Now())
 			if err != nil && cmd.Bool("ignore-errors") {
 				_, _ = fmt.Fprintf(options.Stderr, "vibe-pushover: %v\n", err)
 				return nil
@@ -1139,6 +1252,62 @@ func notifyCommand(options Options) *cli.Command {
 			return err
 		},
 	}
+}
+
+func deliverNotification(
+	ctx context.Context,
+	options Options,
+	configOverride string,
+	agent string,
+	event notification.Event,
+	payload map[string]any,
+	now time.Time,
+) error {
+	message, err := notification.Build(agent, event, payload)
+	if err != nil {
+		return err
+	}
+	path, err := configPath(configOverride)
+	if err != nil {
+		return err
+	}
+	credentials, err := config.Load(path)
+	if err != nil {
+		return err
+	}
+	if credentials.IsSilenced(agent, string(event), notification.ProjectName(payload)) || credentials.IsSnoozed(now) {
+		return nil
+	}
+	if event == notification.EventTurnComplete && (credentials.IsFocused(now) || credentials.IsQuietHours(now)) {
+		return nil
+	}
+	if !notification.ShouldDeliver(event, credentials.NotificationProfile) {
+		return nil
+	}
+	message, err = applyNotificationPreferences(message, event, credentials)
+	if err != nil {
+		return err
+	}
+
+	fingerprint := notificationFingerprint(agent, event, notificationDestination(credentials), payload, message)
+	store := dedupe.Store{Path: options.DedupePath, Now: options.Now}
+	reservation, duplicate, dedupeErr := reserveNotification(store, fingerprint)
+	if dedupeErr != nil {
+		_, _ = fmt.Fprintf(options.Stderr, "vibe-pushover: dedupe unavailable: %v\n", dedupeErr)
+	} else if duplicate {
+		return nil
+	}
+	err = sendWithCredentials(ctx, options, credentials, message)
+	if reservation.Token != "" {
+		if err == nil {
+			if commitErr := store.Commit(reservation); commitErr != nil {
+				_, _ = fmt.Fprintf(options.Stderr, "vibe-pushover: dedupe commit failed: %v\n", commitErr)
+			}
+		} else if releaseErr := store.Release(reservation); releaseErr != nil {
+			_, _ = fmt.Fprintf(options.Stderr, "vibe-pushover: dedupe release failed: %v\n", releaseErr)
+		}
+	}
+	return err
 }
 
 func antigravityStopFailed(payload map[string]any) bool {
@@ -1426,6 +1595,15 @@ func withDefaults(options Options) Options {
 	}
 	if options.Now == nil {
 		options.Now = time.Now
+	}
+	if options.RunProcess == nil {
+		options.RunProcess = func(ctx context.Context, argv []string, stdin io.Reader, stdout, stderr io.Writer) error {
+			process := exec.CommandContext(ctx, argv[0], argv[1:]...)
+			process.Stdin = stdin
+			process.Stdout = stdout
+			process.Stderr = stderr
+			return process.Run()
+		}
 	}
 	if options.DedupePath == "" && !customDelivery {
 		if path, err := dedupe.DefaultPath(); err == nil {

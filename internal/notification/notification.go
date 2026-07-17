@@ -417,8 +417,8 @@ func titleProjectSuffix(project string) string {
 func approvalDetail(agent string, payload map[string]any) string {
 	if agent == "hermes" {
 		extra, _ := payload["extra"].(map[string]any)
-		description := firstString(extra, "description", "message", "reason")
-		command := stringValue(extra, "command")
+		description := approvalLabel(firstString(extra, "description", "message", "reason"))
+		command := compactCommand(stringValue(extra, "command"))
 		if description != "" && command != "" {
 			return description + "\n" + command
 		}
@@ -431,8 +431,8 @@ func approvalDetail(agent string, payload map[string]any) string {
 	}
 	if agent == "gemini" {
 		details, _ := payload["details"].(map[string]any)
-		title := stringValue(details, "title")
-		command := stringValue(details, "command")
+		title := approvalLabel(stringValue(details, "title"))
+		command := compactCommand(stringValue(details, "command"))
 		if title != "" && command != "" {
 			return title + "\n" + command
 		}
@@ -443,20 +443,20 @@ func approvalDetail(agent string, payload map[string]any) string {
 			return title
 		}
 	}
-	tool := firstString(payload, "tool_name", "toolName")
+	tool := approvalLabel(firstString(payload, "tool_name", "toolName"))
 	input, _ := payload["tool_input"].(map[string]any)
 	if input == nil {
 		input, _ = payload["toolArgs"].(map[string]any)
 	}
 	if input != nil {
-		if command := stringValue(input, "command"); command != "" {
+		if command := compactCommand(stringValue(input, "command")); command != "" {
 			if tool != "" {
 				return tool + "\n" + command
 			}
 			return command
 		}
 	}
-	detail := firstString(payload, "message", "reason")
+	detail := firstLine(firstString(payload, "message", "reason"))
 	if tool != "" && detail != "" {
 		return tool + "\n" + detail
 	}
@@ -464,6 +464,37 @@ func approvalDetail(agent string, payload map[string]any) string {
 		return tool
 	}
 	return detail
+}
+
+func compactCommand(value string) string {
+	const maxCommandRunes = 220
+	first := ""
+	extraLines := 0
+	for _, line := range strings.Split(value, "\n") {
+		line = strings.Join(strings.Fields(line), " ")
+		if line == "" {
+			continue
+		}
+		if first == "" {
+			first = line
+			continue
+		}
+		extraLines++
+	}
+	if extraLines > 0 {
+		suffix := fmt.Sprintf(" … (+%d lines)", extraLines)
+		available := maxCommandRunes - utf8.RuneCountInString(suffix)
+		runes := []rune(first)
+		if len(runes) > available {
+			first = string(runes[:available])
+		}
+		return first + suffix
+	}
+	return truncate(first, maxCommandRunes)
+}
+
+func approvalLabel(value string) string {
+	return truncate(firstLine(value), 72)
 }
 
 func projectName(cwd string) string {

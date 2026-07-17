@@ -315,6 +315,41 @@ func TestBuildNonHermesApprovalIgnoresIncidentalExtra(t *testing.T) {
 	}
 }
 
+func TestBuildApprovalCompactsMultilineCommand(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("codex", notification.EventApprovalRequired, map[string]any{
+		"cwd":       "/tmp/demo",
+		"tool_name": "Bash",
+		"tool_input": map[string]any{
+			"command": "cat <<'EOF'\nfirst generated line\nsecond generated line\nEOF",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Body != "Bash\ncat <<'EOF' … (+3 lines)" {
+		t.Fatalf("Body = %q, want compact multiline command", got.Body)
+	}
+}
+
+func TestBuildApprovalKeepsOmittedLineCountAfterTruncatingLongCommand(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("codex", notification.EventApprovalRequired, map[string]any{
+		"tool_name": strings.Repeat("T", 100),
+		"tool_input": map[string]any{
+			"command": strings.Repeat("x", 400) + "\nhidden script body",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if !strings.HasSuffix(got.Body, "… (+1 lines)") {
+		t.Fatalf("Body = %q, want preserved omitted-line count", got.Body)
+	}
+}
+
 func TestBuildGeminiApprovalUsesToolPermissionDetails(t *testing.T) {
 	t.Parallel()
 

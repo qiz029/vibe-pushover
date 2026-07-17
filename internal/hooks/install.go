@@ -63,8 +63,29 @@ var agentCatalog = []AgentInfo{
 	{Name: "zcode", DisplayName: "ZCode", Capabilities: "completion+approval", Resource: "hooks"},
 }
 
+var runAgentCatalog = []AgentInfo{
+	{Name: "continue", DisplayName: "Continue CLI", Capabilities: "session exit+failure", Resource: "run wrapper"},
+	{Name: "crush", DisplayName: "Crush", Capabilities: "session exit+failure", Resource: "run wrapper"},
+	{Name: "plandex", DisplayName: "Plandex", Capabilities: "session exit+failure", Resource: "run wrapper"},
+}
+
 func Agents() []AgentInfo {
 	return append([]AgentInfo(nil), agentCatalog...)
+}
+
+// RunAgents returns agents supported through the generic process wrapper
+// instead of an installed lifecycle hook.
+func RunAgents() []AgentInfo {
+	return append([]AgentInfo(nil), runAgentCatalog...)
+}
+
+func IsRunAgent(name string) bool {
+	for _, agent := range runAgentCatalog {
+		if agent.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 type hookCommand struct {

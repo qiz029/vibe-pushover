@@ -2075,8 +2075,8 @@ func TestAgentsCommandShowsCapabilities(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"aider", "amp", "antigravity", "autohand", "auggie", "claude", "claude-router", "cline", "codebuddy", "codewhale", "codex", "copilot", "craft", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "junie", "kimi", "kiro", "mimo", "mistral", "omp", "openhands", "opencode", "pi", "qoder", "qwen", "rovo", "tabnine", "trae", "vscode", "windsurf", "workbuddy", "zcode",
-		"completion+approval", "completion+approval+attention", "completion+attention", "completion only",
+		"aider", "amp", "antigravity", "autohand", "auggie", "claude", "claude-router", "cline", "codebuddy", "codewhale", "codex", "continue", "copilot", "craft", "crush", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "junie", "kimi", "kiro", "mimo", "mistral", "omp", "openhands", "opencode", "pi", "plandex", "qoder", "qwen", "rovo", "tabnine", "trae", "vscode", "windsurf", "workbuddy", "zcode",
+		"completion+approval", "completion+approval+attention", "completion+attention", "completion only", "session exit+failure", "run wrapper",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("agents output does not contain %q:\n%s", want, output)
@@ -2108,6 +2108,34 @@ func TestAgentsCommandCanShowOnlyDetectedAgents(t *testing.T) {
 	}
 	if strings.Contains(output, "claude") {
 		t.Fatalf("detected agents output unexpectedly contains Claude:\n%s", output)
+	}
+}
+
+func TestAgentsCommandDetectsRunWrapperAgents(t *testing.T) {
+	home := t.TempDir()
+	binDir := t.TempDir()
+	executable := filepath.Join(binDir, "cn")
+	if runtime.GOOS == "windows" {
+		executable += ".exe"
+	}
+	if err := os.WriteFile(executable, nil, 0o755); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", executable, err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("PATH", binDir)
+	if runtime.GOOS == "windows" {
+		t.Setenv("PATHEXT", ".EXE")
+	}
+	clearAgentDetectionOverrides(t)
+
+	var stdout bytes.Buffer
+	app := command.New(command.Options{Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &bytes.Buffer{}})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "agents", "--detected"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if output := stdout.String(); !strings.Contains(output, "continue") || !strings.Contains(output, "run wrapper") {
+		t.Fatalf("detected agents output does not include Continue wrapper:\n%s", output)
 	}
 }
 
@@ -3709,9 +3737,309 @@ func TestInstallCommandRefusesUnownedClineHook(t *testing.T) {
 	}
 }
 
+func TestRunCommandNotifiesAfterLongSuccessfulAgentSession(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	if err := config.Save(configPath, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	var received map[string]string
+	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("ParseForm() error = %v", err)
+		}
+		received = map[string]string{
+			"title":     r.Form.Get("title"),
+			"message":   r.Form.Get("message"),
+			"priority":  r.Form.Get("priority"),
+			"sound":     r.Form.Get("sound"),
+			"timestamp": r.Form.Get("timestamp"),
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"status":1,"request":"request-id"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	start := time.Date(2026, time.July, 17, 12, 0, 0, 0, time.UTC)
+	nowCalls := 0
+	now := func() time.Time {
+		nowCalls++
+		if nowCalls == 1 {
+			return start
+		}
+		return start.Add(45 * time.Second)
+	}
+	var gotArgv []string
+	var stdout, stderr bytes.Buffer
+	app := command.New(command.Options{
+		Stdin:  strings.NewReader("interactive input"),
+		Stdout: &stdout,
+		Stderr: &stderr,
+		RunProcess: func(_ context.Context, argv []string, stdin io.Reader, processStdout, processStderr io.Writer) error {
+			gotArgv = append([]string(nil), argv...)
+			input, err := io.ReadAll(stdin)
+			if err != nil {
+				return err
+			}
+			if string(input) != "interactive input" {
+				return fmt.Errorf("stdin = %q", input)
+			}
+			_, _ = io.WriteString(processStdout, "agent output\n")
+			_, _ = io.WriteString(processStderr, "agent diagnostics\n")
+			return nil
+		},
+		HTTPClient: httpClient,
+		Endpoint:   "https://pushover.test/messages.json",
+		DedupePath: filepath.Join(dir, "dedupe.json"),
+		Now:        now,
+	})
+	err := app.Run(context.Background(), []string{
+		"vibe-pushover", "run", "--config", configPath, "--agent", "continue", "--after", "30s", "--",
+		"cn", "-p", "fix the tests",
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if want := []string{"cn", "-p", "fix the tests"}; !reflect.DeepEqual(gotArgv, want) {
+		t.Fatalf("argv = %#v, want %#v", gotArgv, want)
+	}
+	if stdout.String() != "agent output\n" || stderr.String() != "agent diagnostics\n" {
+		t.Fatalf("forwarded streams = stdout %q stderr %q", stdout.String(), stderr.String())
+	}
+	if !strings.Contains(received["title"], "Continue finished") {
+		t.Fatalf("title = %q, want Continue completion", received["title"])
+	}
+	if received["message"] != "cn finished in 45s" {
+		t.Fatalf("message = %q, want compact duration", received["message"])
+	}
+	if received["priority"] != "-1" || received["sound"] != "none" {
+		t.Fatalf("delivery = priority %q sound %q, want quiet completion", received["priority"], received["sound"])
+	}
+	if received["timestamp"] != "1784289645" {
+		t.Fatalf("timestamp = %q, want process completion time", received["timestamp"])
+	}
+}
+
+func TestRunCommandSuppressesShortSuccessfulAgentSession(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		called = true
+		return nil, errors.New("unexpected Pushover request")
+	})}
+	start := time.Date(2026, time.July, 17, 12, 0, 0, 0, time.UTC)
+	nowCalls := 0
+	app := command.New(command.Options{
+		Stdin:  &bytes.Buffer{},
+		Stdout: &bytes.Buffer{},
+		Stderr: &bytes.Buffer{},
+		RunProcess: func(_ context.Context, _ []string, _ io.Reader, _, _ io.Writer) error {
+			return nil
+		},
+		HTTPClient: httpClient,
+		Endpoint:   "https://pushover.test/messages.json",
+		Now: func() time.Time {
+			nowCalls++
+			if nowCalls == 1 {
+				return start
+			}
+			return start.Add(5 * time.Second)
+		},
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "run", "--config", filepath.Join(t.TempDir(), "missing.json"), "--agent", "plandex", "--", "plandex",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if called {
+		t.Fatal("short successful session sent a notification")
+	}
+}
+
+func TestRunCommandAlwaysNotifiesFailureAndPreservesExitCode(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	if err := config.Save(configPath, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var received map[string]string
+	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("ParseForm() error = %v", err)
+		}
+		received = map[string]string{
+			"title":    r.Form.Get("title"),
+			"message":  r.Form.Get("message"),
+			"priority": r.Form.Get("priority"),
+			"sound":    r.Form.Get("sound"),
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"status":1,"request":"request-id"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	start := time.Date(2026, time.July, 17, 12, 0, 0, 0, time.UTC)
+	nowCalls := 0
+	app := command.New(command.Options{
+		Stdin:  &bytes.Buffer{},
+		Stdout: &bytes.Buffer{},
+		Stderr: &bytes.Buffer{},
+		RunProcess: func(_ context.Context, _ []string, _ io.Reader, _, _ io.Writer) error {
+			return testExitError{code: 17}
+		},
+		HTTPClient: httpClient,
+		Endpoint:   "https://pushover.test/messages.json",
+		DedupePath: filepath.Join(dir, "dedupe.json"),
+		Now: func() time.Time {
+			nowCalls++
+			if nowCalls == 1 {
+				return start
+			}
+			return start.Add(2 * time.Second)
+		},
+	})
+	app.ExitErrHandler = func(context.Context, *cli.Command, error) {}
+	err := app.Run(context.Background(), []string{
+		"vibe-pushover", "run", "--config", configPath, "--agent", "crush", "--", "crush", "--yolo",
+	})
+	var exitCoder interface{ ExitCode() int }
+	if !errors.As(err, &exitCoder) || exitCoder.ExitCode() != 17 {
+		t.Fatalf("Run() error = %v, want exit code 17", err)
+	}
+	if command.ShouldPrintError(err) {
+		t.Fatalf("Run() error = %v, want transparent child exit without duplicate diagnostic", err)
+	}
+	if !strings.Contains(received["title"], "Crush needs attention") {
+		t.Fatalf("title = %q, want Crush attention", received["title"])
+	}
+	if received["message"] != "crush exited with status 17 after 2s" {
+		t.Fatalf("message = %q, want compact failure status", received["message"])
+	}
+	if received["priority"] != "1" || received["sound"] != "persistent" {
+		t.Fatalf("delivery = priority %q sound %q, want actionable attention", received["priority"], received["sound"])
+	}
+}
+
+func TestRunCommandPreservesSignalExitStatus(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX signal semantics")
+	}
+
+	app := command.New(command.Options{
+		Stdin:  &bytes.Buffer{},
+		Stdout: &bytes.Buffer{},
+		Stderr: &bytes.Buffer{},
+	})
+	err := app.Run(context.Background(), []string{
+		"vibe-pushover", "run",
+		"--config", filepath.Join(t.TempDir(), "missing.json"),
+		"--agent", "test-agent",
+		"--", "/bin/sh", "-c", "kill -TERM $$",
+	})
+	var exitCoder interface{ ExitCode() int }
+	if !errors.As(err, &exitCoder) || exitCoder.ExitCode() != 143 {
+		t.Fatalf("Run() error = %v, want conventional SIGTERM status 143", err)
+	}
+	if command.ShouldPrintError(err) {
+		t.Fatalf("Run() error = %v, want transparent signal exit without duplicate diagnostic", err)
+	}
+}
+
+func TestRunCommandMapsPermissionDeniedStartTo126(t *testing.T) {
+	t.Parallel()
+
+	app := command.New(command.Options{
+		Stdin:  &bytes.Buffer{},
+		Stdout: &bytes.Buffer{},
+		Stderr: &bytes.Buffer{},
+		RunProcess: func(_ context.Context, _ []string, _ io.Reader, _, _ io.Writer) error {
+			return &os.PathError{Op: "fork/exec", Path: "/tmp/agent", Err: os.ErrPermission}
+		},
+	})
+	err := app.Run(context.Background(), []string{
+		"vibe-pushover", "run",
+		"--config", filepath.Join(t.TempDir(), "missing.json"),
+		"--agent", "test-agent",
+		"--", "/tmp/agent",
+	})
+	var exitCoder interface{ ExitCode() int }
+	if !errors.As(err, &exitCoder) || exitCoder.ExitCode() != 126 {
+		t.Fatalf("Run() error = %v, want permission-denied status 126", err)
+	}
+	if !command.ShouldPrintError(err) {
+		t.Fatalf("Run() error = %v, want startup diagnostic", err)
+	}
+}
+
+func TestInstallCommandGuidesRunWrapperAgents(t *testing.T) {
+	t.Parallel()
+
+	app := command.New(command.Options{
+		Stdin:      &bytes.Buffer{},
+		Stdout:     &bytes.Buffer{},
+		Stderr:     &bytes.Buffer{},
+		Executable: "/opt/bin/vibe-pushover",
+	})
+	err := app.Run(context.Background(), []string{
+		"vibe-pushover", "install", "--agent", "continue",
+	})
+	if err == nil || !strings.Contains(err.Error(), "uses the run wrapper") || !strings.Contains(err.Error(), "vibe-pushover run --agent continue -- cn") {
+		t.Fatalf("Run() error = %v, want run wrapper guidance", err)
+	}
+}
+
+func TestInstallDetectedExplainsThatWrapperAgentsNeedNoInstallation(t *testing.T) {
+	home := t.TempDir()
+	binDir := t.TempDir()
+	executable := filepath.Join(binDir, "cn")
+	if runtime.GOOS == "windows" {
+		executable += ".exe"
+	}
+	if err := os.WriteFile(executable, nil, 0o755); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", executable, err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("PATH", binDir)
+	if runtime.GOOS == "windows" {
+		t.Setenv("PATHEXT", ".EXE")
+	}
+	clearAgentDetectionOverrides(t)
+
+	var stdout bytes.Buffer
+	app := command.New(command.Options{Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &bytes.Buffer{}})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "install", "--detected"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if output := stdout.String(); !strings.Contains(output, "Run-wrapper agents need no installation: continue") {
+		t.Fatalf("install output does not explain detected wrapper:\n%s", output)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 type errorReader struct{}
+
+type testExitError struct {
+	code int
+}
+
+func (e testExitError) Error() string {
+	return fmt.Sprintf("process exited with status %d", e.code)
+}
+
+func (e testExitError) ExitCode() int {
+	return e.code
+}
 
 func (errorReader) Read([]byte) (int, error) {
 	return 0, errors.New("stdin must not be read")

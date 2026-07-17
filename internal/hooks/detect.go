@@ -34,6 +34,26 @@ var detectionExecutables = map[string][]string{
 	"tabnine":       {"tabnine"},
 }
 
+var runDetectionExecutables = map[string][]string{
+	"continue": {"cn"},
+	"crush":    {"crush"},
+	"plandex":  {"plandex", "pdx"},
+}
+
+// DetectedRunAgents returns process-wrapper agents with a known CLI on PATH.
+func DetectedRunAgents() []AgentInfo {
+	detected := make([]AgentInfo, 0, len(runAgentCatalog))
+	for _, agent := range runAgentCatalog {
+		for _, executable := range runDetectionExecutables[agent.Name] {
+			if _, err := exec.LookPath(executable); err == nil {
+				detected = append(detected, agent)
+				break
+			}
+		}
+	}
+	return detected
+}
+
 // DetectedAgents returns supported agents whose local configuration home
 // exists or whose curated CLI executable is on PATH. It never creates files
 // or starts an agent process.

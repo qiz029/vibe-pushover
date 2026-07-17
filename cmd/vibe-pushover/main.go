@@ -13,7 +13,9 @@ var version = "dev"
 func main() {
 	app := command.New(command.Options{Version: version})
 	if err := app.Run(context.Background(), os.Args); err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		if command.ShouldPrintError(err) {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+		}
+		os.Exit(command.ErrorExitCode(err))
 	}
 }

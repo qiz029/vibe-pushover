@@ -2,10 +2,10 @@
 
 `vibe-pushover` sends a [Pushover](https://pushover.net/) notification when a local coding agent:
 
-- finishes a turn;
+- finishes a turn or wrapped CLI session;
 - needs manual approval or otherwise needs your attention.
 
-The CLI currently integrates with 41 coding agents and compatible runtimes: Aider, Amp, Antigravity CLI, Autohand Code, Augment Auggie, Claude Code, Claude Code Router, Cline, CodeBuddy Code, CodeWhale (formerly DeepSeek-TUI), Codex CLI, GitHub Copilot CLI, Craft Agents, Snowflake Cortex Code, Cursor, Factory Droid, DotCraft, Gajae Code, Gemini CLI, Goose, Grok Build, Hermes Agent, JetBrains Junie CLI, Kimi Code CLI, Kiro, Kilo Code, MiMo Code, Mistral Vibe, Oh My Pi, OpenHands CLI, OpenCode, Pi, Qoder, Qwen Code, Rovo Dev CLI, Tabnine CLI, TRAE, VS Code Agent, Windsurf, WorkBuddy, and ZCode. It is written in Go and uses [`urfave/cli`](https://github.com/urfave/cli).
+The CLI currently integrates with 44 coding agents and compatible runtimes. Forty-one use their native hook, plugin, extension, automation, or notification-command surface: Aider, Amp, Antigravity CLI, Autohand Code, Augment Auggie, Claude Code, Claude Code Router, Cline, CodeBuddy Code, CodeWhale (formerly DeepSeek-TUI), Codex CLI, GitHub Copilot CLI, Craft Agents, Snowflake Cortex Code, Cursor, Factory Droid, DotCraft, Gajae Code, Gemini CLI, Goose, Grok Build, Hermes Agent, JetBrains Junie CLI, Kimi Code CLI, Kiro, Kilo Code, MiMo Code, Mistral Vibe, Oh My Pi, OpenHands CLI, OpenCode, Pi, Qoder, Qwen Code, Rovo Dev CLI, Tabnine CLI, TRAE, VS Code Agent, Windsurf, WorkBuddy, and ZCode. Continue CLI, Crush, and Plandex are supported through the transparent `run` wrapper for session-exit and failure notifications. It is written in Go and uses [`urfave/cli`](https://github.com/urfave/cli).
 
 ## Install
 
@@ -55,7 +55,7 @@ Saved Pushover credentials to ...
 
 Both credential values are hidden when setup runs in a terminal. `configure` remains available as an alias for `setup`.
 
-The default follows Go's user config directory: `~/Library/Application Support/vibe-pushover/config.json` on macOS, and `$XDG_CONFIG_HOME/vibe-pushover/config.json` (usually `~/.config/vibe-pushover/config.json`) on Linux. The containing directory and config file are created with `0700` and `0600` permissions. Use `--config PATH` on `setup`, `status`, `profile`, `detail`, `device`, `sound`, `snooze`, `focus`, `quiet-hours`, `silence`, `install`, `preview`, `test`, or `notify` to override it.
+The default follows Go's user config directory: `~/Library/Application Support/vibe-pushover/config.json` on macOS, and `$XDG_CONFIG_HOME/vibe-pushover/config.json` (usually `~/.config/vibe-pushover/config.json`) on Linux. The containing directory and config file are created with `0700` and `0600` permissions. Use `--config PATH` on `setup`, `status`, `profile`, `detail`, `device`, `sound`, `snooze`, `focus`, `quiet-hours`, `silence`, `install`, `run`, `preview`, `test`, or `notify` to override it.
 
 Inspect every delivery control in one credential-safe summary:
 
@@ -93,7 +93,7 @@ vibe-pushover device iphone,ipad
 vibe-pushover device all
 ```
 
-`detail summary` keeps the compact first useful line, tool command, or failure reason in the notification body. `detail minimal` replaces hook-provided body content with an event-only message such as `Turn completed.` or `Approval requested.` while retaining the agent and project in the title. `detail private` also removes the project name and supplementary action URL, leaving only the agent and event on a phone or watch lock screen. Existing configurations default to `summary`.
+`detail summary` keeps the compact first useful line, tool command, or failure reason in the notification body. Multi-line approval commands show only the first effective line and an omitted-line count, so heredocs and script bodies are not dumped onto the lock screen. `detail minimal` replaces hook-provided body content with an event-only message such as `Turn completed.` or `Approval requested.` while retaining the agent and project in the title. `detail private` also removes the project name and supplementary action URL, leaving only the agent and event on a phone or watch lock screen. Existing configurations default to `summary`.
 
 Temporarily pause every hook notification without changing the permanent profile:
 
@@ -191,9 +191,9 @@ vibe-pushover install --agent zcode
 
 `deepseek` is accepted as an install alias for `codewhale` to support existing DeepSeek-TUI users.
 
-`agents --detected` is a read-only preview of supported agent configuration homes and curated CLI executables found on the machine. This means a newly installed CLI can be recognized before its first run creates a config directory. The exact PATH signals are `aider`, `amp`, `autohand`, `auggie`, `claude`, `ccr`, `cline`, `codebuddy`, `codex`, `copilot`, `gemini`, `junie`, `kimi`, `kiro-cli`, `kilo`, `omp`, `openhands`, `opencode`, `pi`, `qodercli`, `qwen`, and `tabnine`. IDE-only agents and collision-prone command names such as `code`, `craft`, `goose`, and `vibe` remain configuration-marker-only to avoid false positives.
+`agents --detected` is a read-only preview of supported agent configuration homes and curated CLI executables found on the machine. This means a newly installed CLI can be recognized before its first run creates a config directory. The native-integration PATH signals are `aider`, `amp`, `autohand`, `auggie`, `claude`, `ccr`, `cline`, `codebuddy`, `codex`, `copilot`, `gemini`, `junie`, `kimi`, `kiro-cli`, `kilo`, `omp`, `openhands`, `opencode`, `pi`, `qodercli`, `qwen`, and `tabnine`; wrapper detection also recognizes `cn`, `crush`, `plandex`, and `pdx`. IDE-only agents and collision-prone command names such as `code`, `craft`, `goose`, and `vibe` remain configuration-marker-only to avoid false positives.
 
-`install --detected` installs every item in that preview, preserves unrelated settings and third-party hooks, and remains safe to repeat. Detection never starts an agent or creates configuration for agents that were not found; a stale configuration home may still be reported. When `PI_CODING_AGENT_DIR` is set, a single matching `pi` or `omp` executable on PATH identifies the runtime. If both or neither executable is present, choose `--agent pi` or `--agent omp` explicitly because the shared directory override cannot distinguish the two runtimes safely.
+`install --detected` installs every native-integration item in that preview, preserves unrelated settings and third-party hooks, and remains safe to repeat. Detected run-wrapper agents need no files installed and are reported separately. Detection never starts an agent or creates configuration for agents that were not found; a stale configuration home may still be reported. When `PI_CODING_AGENT_DIR` is set, a single matching `pi` or `omp` executable on PATH identifies the runtime. If both or neither executable is present, choose `--agent pi` or `--agent omp` explicitly because the shared directory override cannot distinguish the two runtimes safely.
 
 | Agent | Notifications | Default integration path |
 | --- | --- | --- |
@@ -208,8 +208,10 @@ vibe-pushover install --agent zcode
 | CodeBuddy Code | completion, approval, failure attention | `~/.codebuddy/settings.json` (beta hook API) |
 | CodeWhale (DeepSeek-TUI) | completion, error attention | `$CODEWHALE_CONFIG_PATH`, `$DEEPSEEK_CONFIG_PATH`, `$CODEWHALE_HOME/config.toml`, existing `~/.codewhale/config.toml`, or legacy `~/.deepseek/config.toml` |
 | Codex CLI | completion, approval | `~/.codex/hooks.json` |
+| Continue CLI | session exit, process failure | `vibe-pushover run --agent continue -- cn ...` |
 | GitHub Copilot CLI | completion, approval, question attention | `$COPILOT_HOME/hooks/vibe-pushover.json` or `~/.copilot/hooks/vibe-pushover.json` |
 | Craft Agents | completion, approval, idle attention | `$CRAFT_CONFIG_DIR/workspaces/*/automations.json` or `~/.craft-agent/workspaces/*/automations.json` |
+| Crush | session exit, process failure | `vibe-pushover run --agent crush -- crush ...` |
 | Snowflake Cortex Code | completion, approval | `~/.snowflake/cortex/hooks.json` (preview hook API) |
 | Cursor | completion | `~/.cursor/hooks.json` |
 | Factory Droid | completion, attention | `~/.factory/settings.json` |
@@ -229,6 +231,7 @@ vibe-pushover install --agent zcode
 | OpenHands CLI | completion | `~/.openhands/hooks.json` |
 | OpenCode | completion, approval, error attention | `$XDG_CONFIG_HOME/opencode/plugins/vibe-pushover.ts` or `~/.config/opencode/plugins/vibe-pushover.ts` |
 | Pi | completion | `$PI_CODING_AGENT_DIR/extensions/vibe-pushover/index.ts` or `~/.pi/agent/extensions/vibe-pushover/index.ts` |
+| Plandex | session exit, process failure | `vibe-pushover run --agent plandex -- plandex ...` |
 | Qoder | completion | `~/.qoder/settings.json` |
 | Qwen Code | completion, approval, idle attention | `~/.qwen/settings.json` |
 | Rovo Dev CLI | completion, approval, error attention | `~/.rovodev/config.yml` |
@@ -277,7 +280,22 @@ Cline installs its stable `TaskComplete` hook into the operating system's real D
 
 Gajae Code uses its official `completion.notifyCommand` setting. The installed command reads only the bounded JSON payload supplied in `GJC_NOTIFICATION_JSON`, preserves unrelated YAML settings and comments, and runs for normal completed turns; Gajae excludes aborted and error stops from this notification surface. The setting does not provide an approval event, so this integration reports completion only and does not install a long-running SDK client.
 
-Roo Code, Continue, Crush, Zed Agent, and GitLab Duo CLI have been audited but are not listed as supported because they do not currently expose a stable, installed user-level turn-complete or approval hook suitable for this integration. Roo Code emits task events through its programmatic extension/IPC API, but enabling that API requires process-level setup instead of a normal user hook configuration. Continue's current CLI source contains a hook schema and loader, but its lifecycle firing helpers are not wired into the chat flow. Crush has built-in completion and permission desktop notifications, but its current [user hook surface](https://github.com/charmbracelet/crush/blob/main/internal/skills/builtin/crush-config/SKILL.md#hooks) exposes only `PreToolUse`, so those notifications cannot be redirected through an installed lifecycle hook. Zed's current task hook is limited to worktree creation, and GitLab Duo's external hook experiment currently exposes only `SessionStart` even though Duo has built-in system notifications. Warp already provides its own desktop notifications for completed agents and agents that need attention, but does not expose a corresponding external lifecycle hook. `vibe-pushover` intentionally avoids log polling for these tools because it would be fragile and could leak conversation content.
+Roo Code, Zed Agent, and GitLab Duo CLI have been audited but are not listed as supported because they do not currently expose a stable, installed user-level turn-complete or approval hook suitable for this integration. Roo Code emits task events through its programmatic extension/IPC API, but enabling that API requires process-level setup instead of a normal user hook configuration. Zed's current task hook is limited to worktree creation, and GitLab Duo's external hook experiment currently exposes only `SessionStart` even though Duo has built-in system notifications. Warp already provides its own desktop notifications for completed agents and agents that need attention, but does not expose a corresponding external lifecycle hook. `vibe-pushover` intentionally avoids log polling for these tools because it would be fragile and could leak conversation content.
+
+## Run agents without lifecycle hooks
+
+For a terminal agent without a stable installable hook, place its command behind `run`:
+
+```sh
+vibe-pushover run --agent continue -- cn -p "implement the next task"
+vibe-pushover run --agent plandex -- plandex
+vibe-pushover run --agent crush -- crush
+vibe-pushover run --agent my-agent --after 2m -- my-agent --its-own-flags
+```
+
+The wrapper attaches the original stdin, stdout, and stderr directly and preserves the child process exit status, including conventional `128+signal` status on macOS/Linux. Successful sessions shorter than 30 seconds stay quiet by default; change the threshold with `--after`, including `--after 0s` to notify every success. A failure always bypasses that duration threshold and uses the attention style, even when it happens immediately; global snooze and matching silence rules still apply. Notification transport failures are warnings and never change the agent's exit status.
+
+This fallback observes process exit, not individual turns or approval dialogs inside a long-running TUI. Use an installed native integration when one is available. Continue's documented headless `cn -p` mode is a particularly good fit. Crush already has foreground-aware local completion and permission notifications; the wrapper adds a Pushover session-exit path without scraping its logs or conversation content.
 
 Installed hooks use `--ignore-errors`: a network or Pushover failure is written to the agent's stderr but does not fail the agent turn.
 
