@@ -185,6 +185,25 @@ func TestBuildClineCLICompletionUsesTurnOutput(t *testing.T) {
 	}
 }
 
+func TestBuildOpenHandsCompletionUsesWorkingDirectory(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("openhands", notification.EventTurnComplete, map[string]any{
+		"event_type":  "Stop",
+		"working_dir": "/tmp/demo",
+		"metadata":    map[string]any{"reason": "Agent finished"},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Title != "✓ OpenHands finished · demo" {
+		t.Fatalf("Title = %q", got.Title)
+	}
+	if got.Body != "Turn completed." {
+		t.Fatalf("Body = %q", got.Body)
+	}
+}
+
 func TestBuildHermesCompletionUsesNestedAssistantResponse(t *testing.T) {
 	t.Parallel()
 
@@ -410,14 +429,15 @@ func TestBuildUsesProductNamesInNotificationTitles(t *testing.T) {
 	t.Parallel()
 
 	for agent, want := range map[string]string{
-		"cortex":   "✓ Cortex Code finished · demo",
-		"mimo":     "✓ MiMo Code finished · demo",
-		"mistral":  "✓ Mistral Vibe finished · demo",
-		"omp":      "✓ Oh My Pi finished · demo",
-		"opencode": "✓ OpenCode finished · demo",
-		"qwen":     "✓ Qwen Code finished · demo",
-		"trae":     "✓ TRAE finished · demo",
-		"vscode":   "✓ VS Code finished · demo",
+		"cortex":    "✓ Cortex Code finished · demo",
+		"mimo":      "✓ MiMo Code finished · demo",
+		"mistral":   "✓ Mistral Vibe finished · demo",
+		"omp":       "✓ Oh My Pi finished · demo",
+		"openhands": "✓ OpenHands finished · demo",
+		"opencode":  "✓ OpenCode finished · demo",
+		"qwen":      "✓ Qwen Code finished · demo",
+		"trae":      "✓ TRAE finished · demo",
+		"vscode":    "✓ VS Code finished · demo",
 	} {
 		got, err := notification.Build(agent, notification.EventTurnComplete, map[string]any{"cwd": "/tmp/demo"})
 		if err != nil {

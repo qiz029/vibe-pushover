@@ -47,6 +47,7 @@ func New(options Options) *cli.Command {
 			setupCommand(options),
 			profileCommand(options),
 			snoozeCommand(options),
+			focusCommand(options),
 			deviceCommand(options),
 			agentsCommand(options),
 			installCommand(options),
@@ -78,7 +79,7 @@ func snoozeCommand(options Options) *cli.Command {
 			if value == "" {
 				if credentials.IsSnoozed(now) {
 					until, _ := time.Parse(time.RFC3339Nano, credentials.SnoozedUntil)
-					_, err = fmt.Fprintf(options.Stdout, "Notifications snoozed until %s\n", formatSnoozeDeadline(until, now.Location()))
+					_, err = fmt.Fprintf(options.Stdout, "Notifications snoozed until %s\n", formatDeadline(until, now.Location()))
 					return err
 				}
 				_, err = fmt.Fprintln(options.Stdout, "Notifications are active")
@@ -107,14 +108,70 @@ func snoozeCommand(options Options) *cli.Command {
 			if err := config.Save(path, credentials); err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(options.Stdout, "Notifications snoozed until %s\n", formatSnoozeDeadline(until, now.Location()))
+			_, err = fmt.Fprintf(options.Stdout, "Notifications snoozed until %s\n", formatDeadline(until, now.Location()))
 			return err
 		},
 	}
 }
 
-func formatSnoozeDeadline(until time.Time, location *time.Location) string {
+func formatDeadline(until time.Time, location *time.Location) string {
 	return until.In(location).Format("2006-01-02 15:04 MST")
+}
+
+func focusCommand(options Options) *cli.Command {
+	return &cli.Command{
+		Name:      "focus",
+		Aliases:   []string{"blockers-only"},
+		Usage:     "temporarily suppress completion notifications while keeping blockers",
+		ArgsUsage: "[duration|off]",
+		Flags:     []cli.Flag{configFlag()},
+		Action: func(_ context.Context, cmd *cli.Command) error {
+			now := options.Now()
+			path, err := configPath(cmd.String("config"))
+			if err != nil {
+				return err
+			}
+			credentials, err := config.Load(path)
+			if err != nil {
+				return err
+			}
+			value := strings.ToLower(strings.TrimSpace(cmd.Args().First()))
+			if value == "" {
+				if credentials.IsFocused(now) {
+					until, _ := time.Parse(time.RFC3339Nano, credentials.FocusUntil)
+					_, err = fmt.Fprintf(options.Stdout, "Focus mode active until %s; blocker notifications remain active\n", formatDeadline(until, now.Location()))
+					return err
+				}
+				_, err = fmt.Fprintln(options.Stdout, "Focus mode is off")
+				return err
+			}
+			if cmd.Args().Len() > 1 {
+				return errors.New("focus accepts at most one duration or off")
+			}
+			if value == "off" || value == "resume" {
+				credentials.FocusUntil = ""
+				if err := config.Save(path, credentials); err != nil {
+					return err
+				}
+				_, err = fmt.Fprintln(options.Stdout, "Focus mode disabled; completion notifications resumed")
+				return err
+			}
+			duration, err := time.ParseDuration(value)
+			if err != nil {
+				return fmt.Errorf("parse focus duration %q (examples: 30m, 2h): %w", value, err)
+			}
+			if duration <= 0 {
+				return errors.New("focus duration must be greater than zero")
+			}
+			until := now.Add(duration)
+			credentials.FocusUntil = until.Format(time.RFC3339Nano)
+			if err := config.Save(path, credentials); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(options.Stdout, "Focus mode active until %s; blocker notifications remain active\n", formatDeadline(until, now.Location()))
+			return err
+		},
+	}
 }
 
 func deviceCommand(options Options) *cli.Command {
@@ -445,6 +502,8 @@ func notifyCommand(options Options) *cli.Command {
 						err = loadErr
 					} else if credentials.IsSnoozed(options.Now()) {
 						return nil
+					} else if event == notification.EventTurnComplete && credentials.IsFocused(options.Now()) {
+						return nil
 					} else if !notification.ShouldDeliver(event, credentials.NotificationProfile) {
 						return nil
 					} else if message, err = notification.ApplyProfile(message, event, credentials.NotificationProfile); err == nil {
@@ -490,7 +549,7 @@ func testCommand(options Options) *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "event", Usage: "turn-complete, approval-required, or attention-required", Value: "approval-required"},
 			&cli.StringFlag{Name: "message", Usage: "test message body", Value: "Test notification delivered successfully."},
-			&cli.BoolFlag{Name: "force", Usage: "send even when notifications are snoozed"},
+			&cli.BoolFlag{Name: "force", Usage: "send even when notifications are snoozed or focus mode suppresses completion"},
 			configFlag(),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -508,7 +567,15 @@ func testCommand(options Options) *cli.Command {
 				until, _ := time.Parse(time.RFC3339Nano, credentials.SnoozedUntil)
 				_, err = fmt.Fprintf(options.Stdout,
 					"Test %s notification suppressed while notifications are snoozed until %s; use --force to send\n",
-					event, formatSnoozeDeadline(until, now.Location()),
+					event, formatDeadline(until, now.Location()),
+				)
+				return err
+			}
+			if event == notification.EventTurnComplete && credentials.IsFocused(now) && !cmd.Bool("force") {
+				until, _ := time.Parse(time.RFC3339Nano, credentials.FocusUntil)
+				_, err = fmt.Fprintf(options.Stdout,
+					"Test %s notification suppressed while focus mode is active until %s; use --force to send\n",
+					event, formatDeadline(until, now.Location()),
 				)
 				return err
 			}
@@ -632,6 +699,11 @@ func readPayload(reader io.Reader) (map[string]any, error) {
 func hasUsableWorkspace(payload map[string]any) bool {
 	if cwd, ok := payload["cwd"].(string); ok && strings.TrimSpace(cwd) != "" {
 		return true
+	}
+	for _, key := range []string{"working_dir", "workingDir"} {
+		if workingDir, ok := payload[key].(string); ok && strings.TrimSpace(workingDir) != "" {
+			return true
+		}
 	}
 	for _, key := range []string{"workspace_roots", "workspaceRoots"} {
 		switch roots := payload[key].(type) {

@@ -3,6 +3,7 @@ package command_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/qiz029/vibe-pushover/internal/command"
 	"github.com/qiz029/vibe-pushover/internal/config"
+	"github.com/urfave/cli/v3"
 )
 
 func TestSetupCommandInteractivelyStoresCredentials(t *testing.T) {
@@ -221,6 +223,45 @@ func TestTestCommandCanForceDeliveryWhileSnoozed(t *testing.T) {
 		t.Fatalf("forced test Run() error = %v", err)
 	}
 	if requests != 1 || !strings.Contains(stdout.String(), "Test approval-required notification sent") {
+		t.Fatalf("forced test requests = %d, output = %q", requests, stdout.String())
+	}
+}
+
+func TestTestCommandCanForceCompletionDeliveryDuringFocus(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", FocusUntil: "2026-07-17T14:00:00Z",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	now := time.Date(2026, time.July, 17, 12, 0, 0, 0, time.UTC)
+	requests := 0
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &bytes.Buffer{}, Now: func() time.Time { return now },
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			requests++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"status":1,"request":"request-id"}`)),
+				Header:     make(http.Header),
+			}, nil
+		})},
+		Endpoint: "https://pushover.test/messages.json",
+	})
+	args := []string{"vibe-pushover", "test", "--config", path, "--event", "turn-complete"}
+	if err := app.Run(context.Background(), args); err != nil {
+		t.Fatalf("regular test Run() error = %v", err)
+	}
+	if requests != 0 || !strings.Contains(stdout.String(), "suppressed while focus mode is active") {
+		t.Fatalf("regular test requests = %d, output = %q", requests, stdout.String())
+	}
+	if err := app.Run(context.Background(), append(args, "--force")); err != nil {
+		t.Fatalf("forced test Run() error = %v", err)
+	}
+	if requests != 1 || !strings.Contains(stdout.String(), "Test turn-complete notification sent") {
 		t.Fatalf("forced test requests = %d, output = %q", requests, stdout.String())
 	}
 }
@@ -1111,6 +1152,25 @@ func TestPreviewUsesProcessDirectoryWhenHookPayloadHasNoWorkspace(t *testing.T) 
 	}
 }
 
+func TestPreviewUsesOpenHandsWorkingDirectoryWithoutProcessDirectoryOverride(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin:  bytes.NewBufferString(`{"working_dir":"/tmp/openhands-demo"}`),
+		Stdout: &stdout,
+		Stderr: &bytes.Buffer{},
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "preview", "--agent", "openhands", "--event", "turn-complete",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if want := "✓ OpenHands finished · openhands-demo"; !strings.Contains(stdout.String(), want) {
+		t.Fatalf("preview output does not contain %q:\n%s", want, stdout.String())
+	}
+}
+
 func TestPreviewUsesProcessDirectoryWhenHookWorkspaceIsEmpty(t *testing.T) {
 	t.Parallel()
 
@@ -1145,7 +1205,7 @@ func TestAgentsCommandShowsCapabilities(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"aider", "amp", "auggie", "claude", "cline", "codex", "copilot", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "kimi", "kiro", "mimo", "mistral", "omp", "opencode", "pi", "qoder", "qwen", "trae", "vscode", "windsurf",
+		"aider", "amp", "auggie", "claude", "cline", "codex", "copilot", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "kimi", "kiro", "mimo", "mistral", "omp", "openhands", "opencode", "pi", "qoder", "qwen", "trae", "vscode", "windsurf",
 		"completion+approval", "completion+approval+attention", "completion+attention", "completion only",
 	} {
 		if !strings.Contains(output, want) {
@@ -1301,6 +1361,100 @@ func TestSnoozeCommandPreservesSubsecondDeadline(t *testing.T) {
 	}
 	if got.SnoozedUntil != "2026-07-17T12:00:01.9Z" {
 		t.Fatalf("SnoozedUntil = %q", got.SnoozedUntil)
+	}
+}
+
+func TestFocusCommandSuppressesCompletionsButKeepsBlockerNotifications(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	now := time.Date(2026, time.July, 17, 12, 0, 0, 0, time.UTC)
+	requests := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"status":1,"request":"request-id"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	newApp := func(stdin string) *cli.Command {
+		return command.New(command.Options{
+			Stdin: bytes.NewBufferString(stdin), Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{},
+			Now: func() time.Time { return now }, HTTPClient: httpClient,
+			Endpoint: "https://pushover.test/messages.json", DedupePath: filepath.Join(t.TempDir(), "dedupe.json"),
+		})
+	}
+	if err := newApp("").Run(context.Background(), []string{
+		"vibe-pushover", "focus", "--config", path, "45m",
+	}); err != nil {
+		t.Fatalf("focus Run() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.FocusUntil != "2026-07-17T12:45:00Z" {
+		t.Fatalf("FocusUntil = %q", got.FocusUntil)
+	}
+	if err := newApp(`{"cwd":"/tmp/demo","last_assistant_message":"Done."}`).Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--config", path, "--agent", "codex", "--event", "turn-complete",
+	}); err != nil {
+		t.Fatalf("completion notify Run() error = %v", err)
+	}
+	if err := newApp(`{"cwd":"/tmp/demo","tool_name":"shell","command":"git push"}`).Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--config", path, "--agent", "codex", "--event", "approval-required",
+	}); err != nil {
+		t.Fatalf("approval notify Run() error = %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("Pushover requests = %d, want only the blocker notification", requests)
+	}
+}
+
+func TestFocusCommandShowsStatusAndResumesCompletions(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", FocusUntil: "2026-07-17T14:00:00Z",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &bytes.Buffer{},
+		Now: func() time.Time {
+			return time.Date(2026, time.July, 17, 6, 0, 0, 0, time.FixedZone("PDT", -7*60*60))
+		},
+	})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "focus", "--config", path}); err != nil {
+		t.Fatalf("status Run() error = %v", err)
+	}
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "focus", "--config", path, "off"}); err != nil {
+		t.Fatalf("off Run() error = %v", err)
+	}
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "focus", "--config", path}); err != nil {
+		t.Fatalf("off status Run() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.FocusUntil != "" {
+		t.Fatalf("FocusUntil = %q, want cleared", got.FocusUntil)
+	}
+	for _, want := range []string{
+		"Focus mode active until 2026-07-17 07:00 PDT; blocker notifications remain active",
+		"Focus mode disabled; completion notifications resumed",
+		"Focus mode is off",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("focus output does not contain %q:\n%s", want, stdout.String())
+		}
 	}
 }
 
@@ -1495,6 +1649,68 @@ func TestInstallCommandCreatesKimiHooks(t *testing.T) {
 		if !bytes.Contains(data, []byte(want)) {
 			t.Fatalf("Kimi config does not contain %q: %s", want, data)
 		}
+	}
+}
+
+func TestInstallCommandCreatesOpenHandsCompletionHook(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".openhands", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	original := `{"pre_tool_use":[{"matcher":"terminal","hooks":[{"command":"./protect.sh"}]}]}`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &bytes.Buffer{}, Executable: "/opt/bin/vibe-pushover",
+	})
+	args := []string{
+		"vibe-pushover", "install", "--agent", "openhands", "--agent-config", path,
+	}
+	if err := app.Run(context.Background(), args); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if _, ok := root["pre_tool_use"]; !ok {
+		t.Fatalf("OpenHands config lost existing pre_tool_use hook:\n%s", data)
+	}
+	stop, ok := root["stop"].([]any)
+	if !ok || len(stop) != 1 {
+		t.Fatalf("OpenHands stop hooks = %#v", root["stop"])
+	}
+	encoded := string(data)
+	for _, want := range []string{
+		`"command": "'/opt/bin/vibe-pushover' notify --agent openhands --event turn-complete --ignore-errors"`,
+	} {
+		if !strings.Contains(encoded, want) {
+			t.Fatalf("OpenHands config does not contain %q:\n%s", want, data)
+		}
+	}
+	if strings.Contains(encoded, `"async": true`) {
+		t.Fatalf("OpenHands completion hook is asynchronous and may be killed during headless session teardown:\n%s", data)
+	}
+	if strings.Contains(encoded, "approval-required") {
+		t.Fatalf("OpenHands config installed an unsupported approval hook:\n%s", data)
+	}
+	if err := app.Run(context.Background(), args); err != nil {
+		t.Fatalf("second Run() error = %v", err)
+	}
+	dataAfter, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(after second install) error = %v", err)
+	}
+	if !bytes.Equal(dataAfter, data) {
+		t.Fatalf("second install changed OpenHands config:\n%s", dataAfter)
 	}
 }
 

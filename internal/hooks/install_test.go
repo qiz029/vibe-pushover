@@ -80,25 +80,26 @@ func TestDefaultPathsForAdditionalAgents(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "~/.xdg")
 
 	tests := map[string]string{
-		"aider":    filepath.Join(home, ".aider.conf.yml"),
-		"amp":      filepath.Join(home, ".config", "amp", "plugins", "vibe-pushover.ts"),
-		"auggie":   filepath.Join(home, ".augment", "settings.json"),
-		"cline":    filepath.Join(home, "Documents", "Cline", "Hooks", "TaskComplete"),
-		"copilot":  filepath.Join(home, "copilot-home", "hooks", "vibe-pushover.json"),
-		"cortex":   filepath.Join(home, ".snowflake", "cortex", "hooks.json"),
-		"droid":    filepath.Join(home, ".factory", "settings.json"),
-		"gemini":   filepath.Join(home, "gemini-home", ".gemini", "settings.json"),
-		"goose":    filepath.Join(home, ".agents", "plugins", "vibe-pushover"),
-		"hermes":   filepath.Join(home, ".hermes", "config.yaml"),
-		"kiro":     filepath.Join(home, ".kiro", "hooks", "vibe-pushover.json"),
-		"mimo":     filepath.Join(home, ".xdg", "mimocode", "plugins", "vibe-pushover.ts"),
-		"opencode": filepath.Join(home, ".xdg", "opencode", "plugins", "vibe-pushover.ts"),
-		"omp":      filepath.Join(home, ".omp", "agent", "extensions", "vibe-pushover", "index.ts"),
-		"qoder":    filepath.Join(home, ".qoder", "settings.json"),
-		"qwen":     filepath.Join(home, ".qwen", "settings.json"),
-		"trae":     filepath.Join(home, ".trae", "hooks.json"),
-		"vscode":   filepath.Join(home, "copilot-home", "hooks", "vibe-pushover.json"),
-		"windsurf": filepath.Join(home, ".codeium", "windsurf", "hooks.json"),
+		"aider":     filepath.Join(home, ".aider.conf.yml"),
+		"amp":       filepath.Join(home, ".config", "amp", "plugins", "vibe-pushover.ts"),
+		"auggie":    filepath.Join(home, ".augment", "settings.json"),
+		"cline":     filepath.Join(home, "Documents", "Cline", "Hooks", "TaskComplete"),
+		"copilot":   filepath.Join(home, "copilot-home", "hooks", "vibe-pushover.json"),
+		"cortex":    filepath.Join(home, ".snowflake", "cortex", "hooks.json"),
+		"droid":     filepath.Join(home, ".factory", "settings.json"),
+		"gemini":    filepath.Join(home, "gemini-home", ".gemini", "settings.json"),
+		"goose":     filepath.Join(home, ".agents", "plugins", "vibe-pushover"),
+		"hermes":    filepath.Join(home, ".hermes", "config.yaml"),
+		"kiro":      filepath.Join(home, ".kiro", "hooks", "vibe-pushover.json"),
+		"mimo":      filepath.Join(home, ".xdg", "mimocode", "plugins", "vibe-pushover.ts"),
+		"opencode":  filepath.Join(home, ".xdg", "opencode", "plugins", "vibe-pushover.ts"),
+		"omp":       filepath.Join(home, ".omp", "agent", "extensions", "vibe-pushover", "index.ts"),
+		"openhands": filepath.Join(home, ".openhands", "hooks.json"),
+		"qoder":     filepath.Join(home, ".qoder", "settings.json"),
+		"qwen":      filepath.Join(home, ".qwen", "settings.json"),
+		"trae":      filepath.Join(home, ".trae", "hooks.json"),
+		"vscode":    filepath.Join(home, "copilot-home", "hooks", "vibe-pushover.json"),
+		"windsurf":  filepath.Join(home, ".codeium", "windsurf", "hooks.json"),
 	}
 	for agent, want := range tests {
 		got, err := hooks.DefaultPath(agent)
@@ -2352,5 +2353,50 @@ func TestInstallPiExtensionRefusesToOverwriteForeignFile(t *testing.T) {
 	}
 	if _, err := hooks.Install("pi", path, "/opt/bin/vibe-pushover", ""); err == nil {
 		t.Fatal("Install() error = nil, want foreign-file protection error")
+	}
+}
+
+func TestInstallOpenHandsPreservesWrapperHooksAndConfigSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation may require elevated privileges on Windows")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "shared-hooks.json")
+	path := filepath.Join(dir, "hooks.json")
+	original := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"./existing.sh","timeout":60}]}]}}`
+	if err := os.WriteFile(target, []byte(original), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+
+	changed, err := hooks.Install("openhands", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("Lstat() error = %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("Install() replaced the OpenHands config symlink")
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	for _, want := range []string{
+		`"command": "./existing.sh"`,
+		`"command": "'/opt/bin/vibe-pushover' notify --agent openhands --event turn-complete --ignore-errors --config '/tmp/pushover.json'"`,
+	} {
+		if !bytes.Contains(data, []byte(want)) {
+			t.Fatalf("OpenHands wrapper config does not contain %q:\n%s", want, data)
+		}
 	}
 }

@@ -197,6 +197,9 @@ func payloadWorkingDirectory(payload map[string]any) string {
 	if cwd := stringValue(payload, "cwd"); cwd != "" {
 		return cwd
 	}
+	if workingDir := firstString(payload, "working_dir", "workingDir"); workingDir != "" {
+		return workingDir
+	}
 	if workspace := firstString(payload, "workspaceRoot", "workspace_root", "workspace"); workspace != "" {
 		return workspace
 	}
@@ -247,6 +250,7 @@ func displayName(value string) string {
 		"mimo":          "MiMo Code",
 		"mistral":       "Mistral Vibe",
 		"omp":           "Oh My Pi",
+		"openhands":     "OpenHands",
 		"opencode":      "OpenCode",
 		"qwen":          "Qwen Code",
 		"trae":          "TRAE",

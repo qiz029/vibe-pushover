@@ -16,6 +16,7 @@ type Credentials struct {
 	Device              string `json:"device,omitempty"`
 	NotificationProfile string `json:"notification_profile,omitempty"`
 	SnoozedUntil        string `json:"snoozed_until,omitempty"`
+	FocusUntil          string `json:"focus_until,omitempty"`
 }
 
 func DefaultPath() (string, error) {
@@ -104,11 +105,21 @@ func (c Credentials) Validate() error {
 			return fmt.Errorf("snoozed_until must be an RFC3339 timestamp: %w", err)
 		}
 	}
+	if c.FocusUntil != "" {
+		if _, err := time.Parse(time.RFC3339Nano, c.FocusUntil); err != nil {
+			return fmt.Errorf("focus_until must be an RFC3339 timestamp: %w", err)
+		}
+	}
 	return nil
 }
 
 func (c Credentials) IsSnoozed(now time.Time) bool {
 	until, err := time.Parse(time.RFC3339Nano, c.SnoozedUntil)
+	return err == nil && now.Before(until)
+}
+
+func (c Credentials) IsFocused(now time.Time) bool {
+	until, err := time.Parse(time.RFC3339Nano, c.FocusUntil)
 	return err == nil && now.Before(until)
 }
 

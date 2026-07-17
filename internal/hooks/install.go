@@ -39,6 +39,7 @@ var agentCatalog = []AgentInfo{
 	{Name: "mimo", DisplayName: "MiMo Code", Capabilities: "completion+approval", Resource: "plugin"},
 	{Name: "mistral", DisplayName: "Mistral Vibe", Capabilities: "completion only", Resource: "hooks (experimental)"},
 	{Name: "omp", DisplayName: "Oh My Pi", Capabilities: "completion+approval", Resource: "extension"},
+	{Name: "openhands", DisplayName: "OpenHands CLI", Capabilities: "completion only", Resource: "hooks"},
 	{Name: "opencode", DisplayName: "OpenCode", Capabilities: "completion+approval", Resource: "plugin"},
 	{Name: "pi", DisplayName: "Pi", Capabilities: "completion only", Resource: "extension"},
 	{Name: "qoder", DisplayName: "Qoder", Capabilities: "completion only", Resource: "hooks"},
@@ -201,6 +202,8 @@ func DefaultPath(agent string) (string, error) {
 		return filepath.Join(home, ".vibe", "hooks.toml"), nil
 	case "omp":
 		return filepath.Join(home, ".omp", "agent", "extensions", "vibe-pushover", "index.ts"), nil
+	case "openhands":
+		return filepath.Join(home, ".openhands", "hooks.json"), nil
 	case "mimo":
 		return mimoPluginPath(runtime.GOOS, home, os.Getenv)
 	case "opencode":
@@ -344,6 +347,9 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	}
 	if agent == "omp" {
 		return installOMPExtension(path, executable, pushoverConfig)
+	}
+	if agent == "openhands" {
+		return installOpenHandsHooks(path, executable, pushoverConfig)
 	}
 	if agent == "grok" || agent == "trae" {
 		var err error

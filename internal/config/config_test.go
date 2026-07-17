@@ -117,3 +117,23 @@ func TestSnoozeStateUsesValidatedDeadline(t *testing.T) {
 		t.Fatal("Validate() accepted malformed snooze deadline")
 	}
 }
+
+func TestFocusStateUsesValidatedDeadline(t *testing.T) {
+	t.Parallel()
+
+	credentials := config.Credentials{
+		AppToken: "app", UserKey: "user", FocusUntil: "2026-07-17T12:30:00Z",
+	}
+	before := time.Date(2026, time.July, 17, 12, 29, 59, 0, time.UTC)
+	atDeadline := time.Date(2026, time.July, 17, 12, 30, 0, 0, time.UTC)
+	if !credentials.IsFocused(before) {
+		t.Fatal("IsFocused() = false before deadline")
+	}
+	if credentials.IsFocused(atDeadline) {
+		t.Fatal("IsFocused() = true at deadline")
+	}
+	credentials.FocusUntil = "later"
+	if err := credentials.Validate(); err == nil {
+		t.Fatal("Validate() accepted malformed focus deadline")
+	}
+}
