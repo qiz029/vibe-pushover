@@ -91,6 +91,67 @@ func TestBuildKiroCompletionUsesAssistantResponse(t *testing.T) {
 	}
 }
 
+func TestBuildHermesCompletionUsesNestedAssistantResponse(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("hermes", notification.EventTurnComplete, map[string]any{
+		"cwd":   "/tmp/demo",
+		"extra": map[string]any{"assistant_response": "## Result\n\nImplemented Hermes notifications.\nTests pass."},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Title != "✓ Hermes finished · demo" || got.Body != "Implemented Hermes notifications." {
+		t.Fatalf("Hermes notification = %#v", got)
+	}
+}
+
+func TestBuildHermesApprovalUsesNestedCommandAndDescription(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("hermes", notification.EventApprovalRequired, map[string]any{
+		"cwd":   "/tmp/demo",
+		"extra": map[string]any{"surface": "cli", "command": "git push origin main", "description": "network write"},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Title != "⚠ Hermes needs approval · demo" || got.Body != "network write\ngit push origin main" {
+		t.Fatalf("Hermes approval notification = %#v", got)
+	}
+}
+
+func TestBuildNonHermesCompletionIgnoresIncidentalExtra(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("windsurf", notification.EventTurnComplete, map[string]any{
+		"extra":     map[string]any{"message": "internal metadata"},
+		"tool_info": map[string]any{"response": "Planner output\n\nCanonical Windsurf result."},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Body != "Canonical Windsurf result." {
+		t.Fatalf("Body = %q", got.Body)
+	}
+}
+
+func TestBuildNonHermesApprovalIgnoresIncidentalExtra(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("claude", notification.EventApprovalRequired, map[string]any{
+		"extra":      map[string]any{"description": "internal metadata", "command": "hidden"},
+		"tool_name":  "Bash",
+		"tool_input": map[string]any{"command": "go test ./..."},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Body != "Bash\ngo test ./..." {
+		t.Fatalf("Body = %q", got.Body)
+	}
+}
+
 func TestBuildApprovalNotification(t *testing.T) {
 	t.Parallel()
 

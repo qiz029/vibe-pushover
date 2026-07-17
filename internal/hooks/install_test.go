@@ -44,8 +44,10 @@ func TestDefaultPathsForAdditionalAgents(t *testing.T) {
 		"droid":    filepath.Join(home, ".factory", "settings.json"),
 		"gemini":   filepath.Join(home, "gemini-home", ".gemini", "settings.json"),
 		"goose":    filepath.Join(home, ".agents", "plugins", "vibe-pushover"),
+		"hermes":   filepath.Join(home, ".hermes", "config.yaml"),
 		"kiro":     filepath.Join(home, ".kiro", "hooks", "vibe-pushover.json"),
 		"opencode": filepath.Join(home, ".xdg", "opencode", "plugins", "vibe-pushover.ts"),
+		"qoder":    filepath.Join(home, ".qoder", "settings.json"),
 		"qwen":     filepath.Join(home, ".qwen", "settings.json"),
 		"vscode":   filepath.Join(home, "copilot-home", "hooks", "vibe-pushover.json"),
 		"windsurf": filepath.Join(home, ".codeium", "windsurf", "hooks.json"),
@@ -499,6 +501,111 @@ func TestInstallAddsQwenCompletionApprovalAndIdleAttentionHooks(t *testing.T) {
 	}
 	if changed {
 		t.Fatal("second Install() changed Qwen hooks")
+	}
+}
+
+func TestInstallAddsQoderCompletionHook(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".qoder", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"theme":"dark","hooks":{"Stop":[{"hooks":[{"type":"command","command":"existing"}]}]}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	changed, err := hooks.Install("qoder", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	for _, want := range []string{
+		`"theme": "dark"`,
+		`"command": "existing"`,
+		"--agent qoder --event turn-complete --ignore-errors --skip-active-stop",
+		`"timeout": 10`,
+		"--config '/tmp/pushover.json'",
+	} {
+		if !bytes.Contains(data, []byte(want)) {
+			t.Fatalf("Qoder config does not contain %q:\n%s", want, data)
+		}
+	}
+	changed, err = hooks.Install("qoder", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed Qoder hooks")
+	}
+}
+
+func TestInstallAddsHermesCompletionAndApprovalHooks(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".hermes", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	original := "# personal config\nmodel: nous\nhooks:\n  pre_tool_call:\n    - matcher: terminal\n      command: /usr/local/bin/check-hook\n"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	changed, err := hooks.Install("hermes", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	for _, want := range []string{
+		"# personal config", "model: nous", "pre_tool_call:", "command: /usr/local/bin/check-hook",
+		"post_llm_call:", "--agent hermes --event turn-complete --ignore-errors",
+		"pre_approval_request:", "--agent hermes --event approval-required --ignore-errors --skip-noninteractive-approval",
+		"timeout: 10", "--config '/tmp/pushover.json'",
+	} {
+		if !bytes.Contains(data, []byte(want)) {
+			t.Fatalf("Hermes config does not contain %q:\n%s", want, data)
+		}
+	}
+	var decoded map[string]any
+	if err := yaml.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("YAML is invalid: %v", err)
+	}
+	changed, err = hooks.Install("hermes", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed Hermes hooks")
+	}
+}
+
+func TestInstallHermesReportsHermesForMalformedHook(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".hermes", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte("hooks:\n  post_llm_call:\n    - command:\n        nested: invalid\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	_, err := hooks.Install("hermes", path, "/opt/bin/vibe-pushover", "")
+	if err == nil {
+		t.Fatal("Install() error = nil, want malformed Hermes hook error")
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("Hermes hook")) || bytes.Contains([]byte(err.Error()), []byte("Aider")) {
+		t.Fatalf("Install() error = %q, want Hermes-specific context", err)
 	}
 }
 

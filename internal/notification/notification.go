@@ -72,7 +72,7 @@ func Build(agent string, event Event, payload map[string]any) (Message, error) {
 		}, nil
 	case EventApprovalRequired:
 		body := "Approval requested."
-		if detail := approvalDetail(payload); detail != "" {
+		if detail := approvalDetail(agent, payload); detail != "" {
 			body = detail
 		}
 		return Message{
@@ -102,6 +102,12 @@ func Build(agent string, event Event, payload map[string]any) (Message, error) {
 func completionDetail(agent string, payload map[string]any) string {
 	if detail := completionLine(firstString(payload, "last_assistant_message", "prompt_response", "assistant_response", "message", "reason")); detail != "" {
 		return detail
+	}
+	if agent == "hermes" {
+		extra, _ := payload["extra"].(map[string]any)
+		if detail := completionLine(firstString(extra, "assistant_response", "message", "reason")); detail != "" {
+			return detail
+		}
 	}
 	if agent == "windsurf" {
 		if toolInfo, ok := payload["tool_info"].(map[string]any); ok {
@@ -191,7 +197,21 @@ func titleProjectSuffix(project string) string {
 	return " · " + project
 }
 
-func approvalDetail(payload map[string]any) string {
+func approvalDetail(agent string, payload map[string]any) string {
+	if agent == "hermes" {
+		extra, _ := payload["extra"].(map[string]any)
+		description := firstString(extra, "description", "message", "reason")
+		command := stringValue(extra, "command")
+		if description != "" && command != "" {
+			return description + "\n" + command
+		}
+		if command != "" {
+			return command
+		}
+		if description != "" {
+			return description
+		}
+	}
 	tool := firstString(payload, "tool_name", "toolName")
 	input, _ := payload["tool_input"].(map[string]any)
 	if input == nil {

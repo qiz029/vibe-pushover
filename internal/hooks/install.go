@@ -29,10 +29,12 @@ var agentCatalog = []AgentInfo{
 	{Name: "droid", DisplayName: "Factory Droid", Capabilities: "completion+attention", Resource: "hooks"},
 	{Name: "gemini", DisplayName: "Gemini CLI", Capabilities: "completion only", Resource: "hooks"},
 	{Name: "goose", DisplayName: "Goose", Capabilities: "completion only", Resource: "plugin"},
+	{Name: "hermes", DisplayName: "Hermes Agent", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "kimi", DisplayName: "Kimi Code CLI", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "kiro", DisplayName: "Kiro", Capabilities: "completion only (macOS/Linux)", Resource: "hooks"},
 	{Name: "opencode", DisplayName: "OpenCode", Capabilities: "completion+approval", Resource: "plugin"},
 	{Name: "pi", DisplayName: "Pi", Capabilities: "completion only", Resource: "extension"},
+	{Name: "qoder", DisplayName: "Qoder", Capabilities: "completion only", Resource: "hooks"},
 	{Name: "qwen", DisplayName: "Qwen Code", Capabilities: "completion+approval+attention", Resource: "hooks"},
 	{Name: "vscode", DisplayName: "VS Code Agent", Capabilities: "completion only", Resource: "hooks (preview)"},
 	{Name: "windsurf", DisplayName: "Windsurf", Capabilities: "completion only", Resource: "hooks"},
@@ -100,6 +102,15 @@ func DefaultPath(agent string) (string, error) {
 			return filepath.Join(agentDir, "extensions", "vibe-pushover", "index.ts"), nil
 		}
 	}
+	if agent == "hermes" {
+		if hermesHome := os.Getenv("HERMES_HOME"); hermesHome != "" {
+			hermesHome, err := expandHome(hermesHome)
+			if err != nil {
+				return "", fmt.Errorf("resolve Hermes home: %w", err)
+			}
+			return filepath.Join(hermesHome, "config.yaml"), nil
+		}
+	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -126,6 +137,8 @@ func DefaultPath(agent string) (string, error) {
 		return filepath.Join(home, ".gemini", "settings.json"), nil
 	case "goose":
 		return filepath.Join(home, ".agents", "plugins", "vibe-pushover"), nil
+	case "hermes":
+		return filepath.Join(home, ".hermes", "config.yaml"), nil
 	case "kimi":
 		return filepath.Join(home, ".kimi-code", "config.toml"), nil
 	case "kiro":
@@ -143,6 +156,8 @@ func DefaultPath(agent string) (string, error) {
 		return filepath.Join(configDir, "opencode", "plugins", "vibe-pushover.ts"), nil
 	case "pi":
 		return filepath.Join(home, ".pi", "agent", "extensions", "vibe-pushover", "index.ts"), nil
+	case "qoder":
+		return filepath.Join(home, ".qoder", "settings.json"), nil
 	case "qwen":
 		return filepath.Join(home, ".qwen", "settings.json"), nil
 	case "vscode":
@@ -195,6 +210,9 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	}
 	if agent == "goose" {
 		return installGoosePlugin(path, executable, pushoverConfig)
+	}
+	if agent == "hermes" {
+		return installHermesHooks(path, executable, pushoverConfig)
 	}
 	if agent == "opencode" {
 		return installOpenCodePlugin(path, executable, pushoverConfig)
@@ -288,6 +306,8 @@ func genericHookSpecs(agent string) []hookSpec {
 			{Name: "PermissionRequest", Event: "approval-required", Timeout: 10000, Async: true},
 			{Name: "Notification", Event: "attention-required", Matcher: "idle_prompt", Timeout: 10000, Async: true},
 		}
+	case "qoder":
+		return []hookSpec{{Name: "Stop", Event: "turn-complete", Timeout: 10, Flag: "--skip-active-stop"}}
 	default:
 		return []hookSpec{
 			{Name: "Stop", Event: "turn-complete", Timeout: 10, Async: true},
@@ -347,7 +367,8 @@ func upsert(value any, agent, event string, want hookGroup) ([]any, bool, error)
 				continue
 			}
 			current, _ := command["command"].(string)
-			owned := isOwnedCommand(current, agent, event)
+			owned := isOwnedCommand(current, agent, event) ||
+				isOwnedCommandWithFlag(current, agent, event, "--skip-active-stop")
 			if agent == "qwen" && event == "turn-complete" {
 				owned = owned || isOwnedCommandWithFlag(current, agent, event, "--skip-active-qwen-stop")
 			}

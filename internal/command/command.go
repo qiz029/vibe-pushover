@@ -245,10 +245,10 @@ func notifyCommand(options Options) *cli.Command {
 			&cli.StringFlag{Name: "agent", Usage: "source agent name", Required: true},
 			&cli.StringFlag{Name: "event", Usage: "turn-complete, approval-required, or attention-required", Required: true},
 			&cli.BoolFlag{Name: "ignore-errors", Usage: "log delivery failures without failing the hook"},
-			// Kept as a no-op so hooks installed by the pre-Kimi release candidate keep working.
 			&cli.BoolFlag{Name: "skip-active-stop", Hidden: true},
 			&cli.BoolFlag{Name: "skip-non-completion", Hidden: true},
 			&cli.BoolFlag{Name: "skip-active-qwen-stop", Hidden: true},
+			&cli.BoolFlag{Name: "skip-noninteractive-approval", Hidden: true},
 			configFlag(),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -263,9 +263,19 @@ func notifyCommand(options Options) *cli.Command {
 					return nil
 				}
 			}
-			if cmd.Bool("skip-active-qwen-stop") {
+			// Kimi release candidates briefly emitted --skip-active-stop as a no-op.
+			// Preserve that behavior while using the flag for agents whose Stop
+			// contract defines stop_hook_active re-entry semantics.
+			if (cmd.Bool("skip-active-stop") && cmd.String("agent") != "kimi") || cmd.Bool("skip-active-qwen-stop") {
 				active, _ := payload["stop_hook_active"].(bool)
 				if active {
+					return nil
+				}
+			}
+			if cmd.Bool("skip-noninteractive-approval") {
+				extra, _ := payload["extra"].(map[string]any)
+				surface, _ := extra["surface"].(string)
+				if surface == "smart" {
 					return nil
 				}
 			}

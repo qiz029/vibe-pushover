@@ -64,13 +64,17 @@ func installAiderNotifications(path, executable, pushoverConfig string) (bool, e
 }
 
 func yamlScalarValue(mapping *yaml.Node, key string) (string, bool, error) {
+	return yamlScalarValueFor(mapping, key, "Aider config")
+}
+
+func yamlScalarValueFor(mapping *yaml.Node, key, context string) (string, bool, error) {
 	found := -1
 	for index := 0; index+1 < len(mapping.Content); index += 2 {
 		if mapping.Content[index].Value != key {
 			continue
 		}
 		if found >= 0 {
-			return "", false, fmt.Errorf("Aider config contains duplicate %q keys", key)
+			return "", false, fmt.Errorf("%s contains duplicate %q keys", context, key)
 		}
 		found = index + 1
 	}
@@ -78,7 +82,7 @@ func yamlScalarValue(mapping *yaml.Node, key string) (string, bool, error) {
 		return "", false, nil
 	}
 	if mapping.Content[found].Kind != yaml.ScalarNode {
-		return "", false, fmt.Errorf("Aider config field %q must be a scalar", key)
+		return "", false, fmt.Errorf("%s field %q must be a scalar", context, key)
 	}
 	return mapping.Content[found].Value, true, nil
 }
@@ -105,13 +109,17 @@ func readAiderConfig(path string) (*yaml.Node, error) {
 }
 
 func upsertYAMLScalar(mapping *yaml.Node, key string, want *yaml.Node) (bool, error) {
+	return upsertYAMLScalarFor(mapping, key, want, "Aider config")
+}
+
+func upsertYAMLScalarFor(mapping *yaml.Node, key string, want *yaml.Node, context string) (bool, error) {
 	found := -1
 	for index := 0; index+1 < len(mapping.Content); index += 2 {
 		if mapping.Content[index].Value != key {
 			continue
 		}
 		if found >= 0 {
-			return false, fmt.Errorf("Aider config contains duplicate %q keys", key)
+			return false, fmt.Errorf("%s contains duplicate %q keys", context, key)
 		}
 		found = index + 1
 	}

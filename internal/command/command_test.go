@@ -235,6 +235,52 @@ func TestNotifyCommandSkipsQwenActiveStop(t *testing.T) {
 	}
 }
 
+func TestNotifyCommandSkipsGenericActiveStop(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	app := command.New(command.Options{
+		Stdin:  bytes.NewBufferString(`{"stop_hook_active":true,"cwd":"/tmp/demo"}`),
+		Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			called = true
+			return nil, errors.New("unexpected Pushover request")
+		})},
+		Endpoint: "https://pushover.test/messages.json",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--agent", "qoder", "--event", "turn-complete", "--skip-active-stop",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if called {
+		t.Fatal("notify sent a Pushover request for an active Stop re-entry")
+	}
+}
+
+func TestNotifyCommandSkipsHermesSmartApproval(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	app := command.New(command.Options{
+		Stdin:  bytes.NewBufferString(`{"extra":{"surface":"smart","command":"rm -rf build"}}`),
+		Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			called = true
+			return nil, errors.New("unexpected Pushover request")
+		})},
+		Endpoint: "https://pushover.test/messages.json",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--agent", "hermes", "--event", "approval-required", "--skip-noninteractive-approval",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if called {
+		t.Fatal("notify sent a Pushover request for a smart auto-approval decision")
+	}
+}
+
 func TestPreviewCommandShowsNotificationWithoutCredentials(t *testing.T) {
 	t.Parallel()
 
@@ -316,7 +362,7 @@ func TestAgentsCommandShowsCapabilities(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"aider", "amp", "auggie", "claude", "codex", "copilot", "cursor", "droid", "gemini", "goose", "kimi", "kiro", "opencode", "pi", "qwen", "vscode", "windsurf",
+		"aider", "amp", "auggie", "claude", "codex", "copilot", "cursor", "droid", "gemini", "goose", "hermes", "kimi", "kiro", "opencode", "pi", "qoder", "qwen", "vscode", "windsurf",
 		"completion+approval", "completion+approval+attention", "completion+attention", "completion only",
 	} {
 		if !strings.Contains(output, want) {
