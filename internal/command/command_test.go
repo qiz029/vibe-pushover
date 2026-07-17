@@ -109,6 +109,25 @@ func TestSetupCommandStoresUrgentNotificationProfile(t *testing.T) {
 	}
 }
 
+func TestSetupCommandStoresOnCallNotificationProfile(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	app := command.New(command.Options{
+		Stdin: bytes.NewBufferString("app-token\nuser-key\non-call\n\n\n"), Stdout: &bytes.Buffer{},
+	})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "setup", "--config", path}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.NotificationProfile != "on-call" {
+		t.Fatalf("NotificationProfile = %q, want on-call", got.NotificationProfile)
+	}
+}
+
 func TestTestCommandSendsConfiguredApprovalExperience(t *testing.T) {
 	t.Parallel()
 
@@ -1429,6 +1448,47 @@ func TestNotifyCommandUrgentProfilePreservesActionableDelivery(t *testing.T) {
 	}
 }
 
+func TestNotifyCommandOnCallProfileSendsEmergencyBlocker(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", NotificationProfile: "on-call",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var sent map[string]string
+	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("ParseForm() error = %v", err)
+		}
+		sent = map[string]string{
+			"priority": r.Form.Get("priority"), "sound": r.Form.Get("sound"),
+			"ttl": r.Form.Get("ttl"), "retry": r.Form.Get("retry"), "expire": r.Form.Get("expire"),
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"status":1,"request":"request-id","receipt":"receipt-id"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	app := command.New(command.Options{
+		Stdin:  bytes.NewBufferString(`{"cwd":"/tmp/demo","tool_name":"Bash"}`),
+		Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, HTTPClient: httpClient,
+		Endpoint: "https://pushover.test/messages.json", DedupePath: filepath.Join(dir, "dedupe.json"),
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--config", path, "--agent", "codex", "--event", "approval-required",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := map[string]string{"priority": "2", "sound": "persistent", "ttl": "", "retry": "60", "expire": "900"}
+	if !reflect.DeepEqual(sent, want) {
+		t.Fatalf("sent form = %#v, want %#v", sent, want)
+	}
+}
+
 func TestNotifyCommandSkipsAuggieNonCompletionStop(t *testing.T) {
 	t.Parallel()
 
@@ -1750,6 +1810,26 @@ func TestPreviewCommandShowsUrgentProfileCompletionIsSuppressed(t *testing.T) {
 	}
 }
 
+func TestPreviewCommandShowsOnCallEmergencySchedule(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin: bytes.NewBufferString(`{"cwd":"/tmp/demo","tool_name":"Bash"}`), Stdout: &stdout, Stderr: &bytes.Buffer{},
+		DefaultConfigPath: filepath.Join(t.TempDir(), "missing.json"),
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "preview", "--agent", "codex", "--event", "approval-required", "--profile", "on-call",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, want := range []string{"Priority: 2", "Sound: persistent", "TTL: 0s", "Retry: 1m0s", "Expire: 15m0s"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("preview output does not contain %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
 func TestPreviewCommandExplainsMatchingSilenceRule(t *testing.T) {
 	t.Parallel()
 
@@ -1927,7 +2007,7 @@ func TestAgentsCommandShowsCapabilities(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"aider", "amp", "antigravity", "autohand", "auggie", "claude", "cline", "codebuddy", "codewhale", "codex", "copilot", "craft", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "junie", "kimi", "kiro", "mimo", "mistral", "omp", "openhands", "opencode", "pi", "qoder", "qwen", "rovo", "tabnine", "trae", "vscode", "windsurf", "workbuddy", "zcode",
+		"aider", "amp", "antigravity", "autohand", "auggie", "claude", "claude-router", "cline", "codebuddy", "codewhale", "codex", "copilot", "craft", "cortex", "cursor", "droid", "gemini", "goose", "grok", "hermes", "junie", "kimi", "kiro", "mimo", "mistral", "omp", "openhands", "opencode", "pi", "qoder", "qwen", "rovo", "tabnine", "trae", "vscode", "windsurf", "workbuddy", "zcode",
 		"completion+approval", "completion+approval+attention", "completion+attention", "completion only",
 	} {
 		if !strings.Contains(output, want) {
@@ -2627,6 +2707,31 @@ func TestInstallCommandWiresCustomPushoverConfig(t *testing.T) {
 	}
 	if !bytes.Contains(data, []byte(`--config '`+pushoverConfig+`'`)) {
 		t.Fatalf("installed hook does not use custom Pushover config: %s", data)
+	}
+}
+
+func TestInstallCommandAcceptsCCRAsClaudeCodeRouterAlias(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "settings.json")
+	stdout := &bytes.Buffer{}
+	app := command.New(command.Options{
+		Stdout: stdout, Stderr: &bytes.Buffer{}, Executable: "/opt/bin/vibe-pushover",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "install", "--agent", "ccr", "--agent-config", path,
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !bytes.Contains(data, []byte("--agent claude --event turn-complete")) {
+		t.Fatalf("CCR alias did not install shared Claude hook: %s", data)
+	}
+	if !strings.Contains(stdout.String(), "claude-router") {
+		t.Fatalf("install output did not identify Claude Code Router: %q", stdout.String())
 	}
 }
 

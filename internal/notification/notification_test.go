@@ -665,6 +665,28 @@ func TestUrgentProfileOnlySuppressesCompletedTurns(t *testing.T) {
 	}
 }
 
+func TestOnCallProfileSuppressesCompletionAndEscalatesBlockers(t *testing.T) {
+	t.Parallel()
+
+	if notification.ShouldDeliver(notification.EventTurnComplete, "on-call") {
+		t.Fatal("on-call profile delivers completed turns")
+	}
+	for _, event := range []notification.Event{notification.EventApprovalRequired, notification.EventAttentionRequired} {
+		if !notification.ShouldDeliver(event, "on-call") {
+			t.Fatalf("on-call profile suppresses %s", event)
+		}
+		message, err := notification.ApplyProfile(notification.Message{
+			Priority: 1, Sound: "persistent", TTL: 1800,
+		}, event, "on-call")
+		if err != nil {
+			t.Fatalf("ApplyProfile(%s) error = %v", event, err)
+		}
+		if message.Priority != 2 || message.Sound != "persistent" || message.TTL != 0 || message.Retry != 60 || message.Expire != 900 {
+			t.Fatalf("on-call %s delivery = %#v", event, message)
+		}
+	}
+}
+
 func TestBuildFormatsGrokBuildHookPayload(t *testing.T) {
 	t.Parallel()
 

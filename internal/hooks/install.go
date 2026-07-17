@@ -26,6 +26,7 @@ var agentCatalog = []AgentInfo{
 	{Name: "autohand", DisplayName: "Autohand Code", Capabilities: "completion+approval+attention", Resource: "hooks"},
 	{Name: "auggie", DisplayName: "Augment Auggie", Capabilities: "completion only", Resource: "hooks+script"},
 	{Name: "claude", DisplayName: "Claude Code", Capabilities: "completion+approval", Resource: "hooks"},
+	{Name: "claude-router", DisplayName: "Claude Code Router", Capabilities: "completion+approval", Resource: "shared Claude hooks"},
 	{Name: "cline", DisplayName: "Cline", Capabilities: "completion only", Resource: "hooks"},
 	{Name: "codebuddy", DisplayName: "CodeBuddy Code", Capabilities: "completion+approval+attention", Resource: "hooks (beta)"},
 	{Name: "codewhale", DisplayName: "CodeWhale (DeepSeek-TUI)", Capabilities: "completion+attention", Resource: "hooks"},
@@ -253,7 +254,7 @@ func DefaultPath(agent string) (string, error) {
 		return filepath.Join(home, ".copilot", "hooks", "vibe-pushover.json"), nil
 	case "cortex":
 		return filepath.Join(home, ".snowflake", "cortex", "hooks.json"), nil
-	case "claude":
+	case "claude", "claude-router":
 		return filepath.Join(home, ".claude", "settings.json"), nil
 	case "cursor":
 		return filepath.Join(home, ".cursor", "hooks.json"), nil
@@ -401,6 +402,11 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	}
 	if strings.TrimSpace(executable) == "" {
 		return false, errors.New("executable path is required")
+	}
+	if agent == "claude-router" {
+		// Claude Code Router starts the official Claude Code runtime, so both
+		// products discover and execute the same ~/.claude lifecycle hooks.
+		agent = "claude"
 	}
 	if agent == "pi" {
 		return installPiExtension(path, executable, pushoverConfig)

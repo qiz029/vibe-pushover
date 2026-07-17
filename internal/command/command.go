@@ -500,7 +500,7 @@ func profileCommand(options Options) *cli.Command {
 	return &cli.Command{
 		Name:      "profile",
 		Usage:     "show or change the notification profile",
-		ArgsUsage: "[balanced|quiet|urgent|watch]",
+		ArgsUsage: "[balanced|quiet|urgent|watch|on-call]",
 		Flags:     []cli.Flag{configFlag()},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			path, err := configPath(cmd.String("config"))
@@ -693,7 +693,7 @@ func previewCommand(options Options) *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "agent", Usage: "source agent name", Required: true},
 			&cli.StringFlag{Name: "event", Usage: "turn-complete, approval-required, or attention-required", Required: true},
-			&cli.StringFlag{Name: "profile", Usage: "notification profile: balanced, quiet, urgent, or watch", Value: "balanced"},
+			&cli.StringFlag{Name: "profile", Usage: "notification profile: balanced, quiet, urgent, watch, or on-call", Value: "balanced"},
 			configFlag(),
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
@@ -761,6 +761,10 @@ func previewCommand(options Options) *cli.Command {
 				"Title: %s\nBody: %s\nPriority: %d\nSound: %s\nTTL: %s\n",
 				message.Title, message.Body, message.Priority, message.Sound, time.Duration(message.TTL)*time.Second,
 			)
+			if err == nil && message.Priority == 2 {
+				_, err = fmt.Fprintf(options.Stdout, "Retry: %s\nExpire: %s\n",
+					time.Duration(message.Retry)*time.Second, time.Duration(message.Expire)*time.Second)
+			}
 			if err == nil && message.URL != "" {
 				_, err = fmt.Fprintf(options.Stdout, "Action: %s (%s)\n", message.URLTitle, message.URL)
 			}
@@ -788,8 +792,8 @@ func setupCommand(options Options) *cli.Command {
 				return err
 			}
 			profile, err := prompter.readChoice(
-				"Notification profile [balanced/quiet/urgent/watch] (balanced): ",
-				"balanced", "balanced", "quiet", "urgent", "watch",
+				"Notification profile [balanced/quiet/urgent/watch/on-call] (balanced): ",
+				"balanced", "balanced", "quiet", "urgent", "watch", "on-call",
 			)
 			if err != nil {
 				return err
@@ -862,6 +866,8 @@ func installCommand(options Options) *cli.Command {
 			}
 			if agent == "deepseek" {
 				agent = "codewhale"
+			} else if agent == "ccr" {
+				agent = "claude-router"
 			}
 			pushoverConfig := cmd.String("config")
 			if pushoverConfig != "" {
@@ -1232,6 +1238,8 @@ func sendWithCredentials(ctx context.Context, options Options, credentials confi
 		Priority:  message.Priority,
 		Sound:     message.Sound,
 		TTL:       message.TTL,
+		Retry:     message.Retry,
+		Expire:    message.Expire,
 	})
 }
 
@@ -1266,6 +1274,7 @@ func notificationFingerprint(agent string, event notification.Event, destination
 		"agent": agent, "event": event, "destination": destination,
 		"title": message.Title, "body": message.Body, "url": message.URL, "url_title": message.URLTitle,
 		"timestamp": message.Timestamp, "priority": message.Priority, "sound": message.Sound, "ttl": message.TTL,
+		"retry": message.Retry, "expire": message.Expire,
 	}
 	for _, key := range []string{"session_id", "sessionId", "turn_id", "turnId", "tool_call_id", "toolCallId", "approval_id", "approvalId"} {
 		if value := fingerprintScalar(payload[key]); value != "" {

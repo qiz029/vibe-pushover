@@ -29,10 +29,12 @@ type Message struct {
 	Priority  int
 	Sound     string
 	TTL       int
+	Retry     int
+	Expire    int
 }
 
 func ShouldDeliver(event Event, profile string) bool {
-	return profile != "urgent" || event != EventTurnComplete
+	return (profile != "urgent" && profile != "on-call") || event != EventTurnComplete
 }
 
 func ApplyProfile(message Message, event Event, profile string) (Message, error) {
@@ -50,6 +52,15 @@ func ApplyProfile(message Message, event Event, profile string) (Message, error)
 		}
 		return message, nil
 	case "urgent":
+		return message, nil
+	case "on-call":
+		if event == EventApprovalRequired || event == EventAttentionRequired {
+			message.Priority = 2
+			message.Sound = "persistent"
+			message.TTL = 0
+			message.Retry = 60
+			message.Expire = 900
+		}
 		return message, nil
 	default:
 		return Message{}, fmt.Errorf("unknown notification profile %q", profile)

@@ -65,6 +65,7 @@ func DetectedAgents() ([]AgentInfo, error) {
 		"workbuddy":   {filepath.Join(home, ".workbuddy")},
 		"zcode":       {filepath.Join(home, ".zcode")},
 	}
+	markers["claude-router"] = []string{filepath.Join(home, ".claude-code-router")}
 	detected := make([]AgentInfo, 0, len(markers))
 	for _, agent := range agentCatalog {
 		agentMarkers := append([]string(nil), markers[agent.Name]...)
@@ -77,7 +78,9 @@ func DetectedAgents() ([]AgentInfo, error) {
 			// Pi and Oh My Pi share this override and install incompatible files
 			// at the same path, so directory existence cannot identify the runtime.
 			agentMarkers = nil
-		} else {
+		} else if agent.Name != "claude-router" {
+			// Claude Code Router shares Claude's settings target, but that file
+			// alone does not prove the separate Router CLI is installed.
 			agentMarkers = append(agentMarkers, resolvedPaths...)
 		}
 		overrideMarkers, err := overrideDetectionMarkers(agent.Name, resolvedPaths)

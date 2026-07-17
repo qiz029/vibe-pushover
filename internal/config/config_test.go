@@ -110,6 +110,15 @@ func TestRejectsUnknownNotificationProfile(t *testing.T) {
 	}
 }
 
+func TestAcceptsOnCallNotificationProfile(t *testing.T) {
+	t.Parallel()
+
+	credentials := config.Credentials{AppToken: "app", UserKey: "user", NotificationProfile: "on-call"}
+	if err := credentials.Validate(); err != nil {
+		t.Fatalf("Validate() rejected on-call notification profile: %v", err)
+	}
+}
+
 func TestRejectsUnknownNotificationDetail(t *testing.T) {
 	t.Parallel()
 

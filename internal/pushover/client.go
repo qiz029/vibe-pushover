@@ -25,6 +25,8 @@ type Message struct {
 	Priority  int
 	Sound     string
 	TTL       int
+	Retry     int
+	Expire    int
 }
 
 type Client struct {
@@ -37,6 +39,14 @@ func NewClient(httpClient *http.Client, endpoint string) *Client {
 }
 
 func (c *Client) Send(ctx context.Context, message Message) error {
+	if message.Priority == 2 {
+		if message.Retry < 30 {
+			return fmt.Errorf("emergency notification retry must be at least 30 seconds, got %d", message.Retry)
+		}
+		if message.Expire <= 0 || message.Expire > 10800 {
+			return fmt.Errorf("emergency notification expire must be between 1 and 10800 seconds, got %d", message.Expire)
+		}
+	}
 	form := url.Values{
 		"token":    {message.AppToken},
 		"user":     {message.UserKey},
@@ -50,8 +60,12 @@ func (c *Client) Send(ctx context.Context, message Message) error {
 	if message.Sound != "" {
 		form.Set("sound", message.Sound)
 	}
-	if message.TTL > 0 {
+	if message.TTL > 0 && message.Priority != 2 {
 		form.Set("ttl", strconv.Itoa(message.TTL))
+	}
+	if message.Priority == 2 {
+		form.Set("retry", strconv.Itoa(message.Retry))
+		form.Set("expire", strconv.Itoa(message.Expire))
 	}
 	if validTimestamp(message.Timestamp) {
 		form.Set("timestamp", strconv.FormatInt(message.Timestamp, 10))

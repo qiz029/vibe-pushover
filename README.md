@@ -5,7 +5,7 @@
 - finishes a turn;
 - needs manual approval or otherwise needs your attention.
 
-The CLI currently integrates with 40 coding agents: Aider, Amp, Antigravity CLI, Autohand Code, Augment Auggie, Claude Code, Cline, CodeBuddy Code, CodeWhale (formerly DeepSeek-TUI), Codex CLI, GitHub Copilot CLI, Craft Agents, Snowflake Cortex Code, Cursor, Factory Droid, DotCraft, Gajae Code, Gemini CLI, Goose, Grok Build, Hermes Agent, JetBrains Junie CLI, Kimi Code CLI, Kiro, Kilo Code, MiMo Code, Mistral Vibe, Oh My Pi, OpenHands CLI, OpenCode, Pi, Qoder, Qwen Code, Rovo Dev CLI, Tabnine CLI, TRAE, VS Code Agent, Windsurf, WorkBuddy, and ZCode. It is written in Go and uses [`urfave/cli`](https://github.com/urfave/cli).
+The CLI currently integrates with 41 coding agents and compatible runtimes: Aider, Amp, Antigravity CLI, Autohand Code, Augment Auggie, Claude Code, Claude Code Router, Cline, CodeBuddy Code, CodeWhale (formerly DeepSeek-TUI), Codex CLI, GitHub Copilot CLI, Craft Agents, Snowflake Cortex Code, Cursor, Factory Droid, DotCraft, Gajae Code, Gemini CLI, Goose, Grok Build, Hermes Agent, JetBrains Junie CLI, Kimi Code CLI, Kiro, Kilo Code, MiMo Code, Mistral Vibe, Oh My Pi, OpenHands CLI, OpenCode, Pi, Qoder, Qwen Code, Rovo Dev CLI, Tabnine CLI, TRAE, VS Code Agent, Windsurf, WorkBuddy, and ZCode. It is written in Go and uses [`urfave/cli`](https://github.com/urfave/cli).
 
 ## Install
 
@@ -47,7 +47,7 @@ vibe-pushover setup
 
 Pushover application token:
 Pushover user/group key:
-Notification profile [balanced/quiet/urgent/watch] (balanced):
+Notification profile [balanced/quiet/urgent/watch/on-call] (balanced):
 Notification detail [summary/minimal/private] (summary):
 Target Pushover device(s), comma-separated (all; groups may ignore):
 Saved Pushover credentials to ...
@@ -80,6 +80,7 @@ The notification profile can be viewed or changed later without re-entering the 
 vibe-pushover profile
 vibe-pushover profile watch
 vibe-pushover profile urgent
+vibe-pushover profile on-call
 
 vibe-pushover detail
 vibe-pushover detail minimal
@@ -164,6 +165,7 @@ vibe-pushover agents --detected
 vibe-pushover install --detected
 vibe-pushover install --agent antigravity
 vibe-pushover install --agent autohand
+vibe-pushover install --agent claude-router
 vibe-pushover install --agent cline
 vibe-pushover install --agent codebuddy
 vibe-pushover install --agent codewhale
@@ -199,6 +201,7 @@ vibe-pushover install --agent zcode
 | Autohand Code | completion, approval, error attention | `$AUTOHAND_CONFIG` or `~/.autohand/config.json` |
 | Augment Auggie | completion (macOS/Linux) | `~/.augment/settings.json` plus `~/.augment/hooks/vibe-pushover.sh` |
 | Claude Code | completion, approval | `~/.claude/settings.json` |
+| Claude Code Router | completion, approval through Claude Code | shared `~/.claude/settings.json` |
 | Cline | completion | `<Documents>/Cline/Hooks/TaskComplete` (`TaskComplete.ps1` on Windows); when Windows My Documents or Linux XDG Documents is redirected, also `$CLINE_DIR/hooks/TaskComplete[.ps1]` or `~/.cline/hooks/TaskComplete[.ps1]` for CLI |
 | CodeBuddy Code | completion, approval, failure attention | `~/.codebuddy/settings.json` (beta hook API) |
 | CodeWhale (DeepSeek-TUI) | completion, error attention | `$CODEWHALE_CONFIG_PATH`, `$DEEPSEEK_CONFIG_PATH`, `$CODEWHALE_HOME/config.toml`, existing `~/.codewhale/config.toml`, or legacy `~/.deepseek/config.toml` |
@@ -235,6 +238,8 @@ vibe-pushover install --agent zcode
 | ZCode | completion, approval | `~/.zcode/cli/config.json` |
 
 The integrations follow each agent's native hook, plugin, or notification-command mechanism. They preserve existing settings, only replace entries owned by `vibe-pushover`, and repeated installs are idempotent. Copilot's attention event is limited to permission and elicitation dialogs. Droid's attention event can also mean the agent has been idle and is waiting for input. Amp reports its `awaiting-approval` state separately from turn errors. Gemini maps its official `AfterAgent` hook to completion and its `Notification` hook matched as `ToolPermission` to approval; the latter extracts the compact tool title and command from Gemini's nested details. Grok Build maps its top-level `Stop` event to completion and `StopFailure` to attention; its separate `SubagentStop` event is deliberately not installed, so child completions stay quiet. Kilo Code, MiMo Code, and OpenCode use compatible `session.idle`, `permission.asked`, and `session.error` plugin events for completion, approval, and error attention; child-session completion and error events stay quiet. Each installs into its own config tree and does not share a plugin file. Qwen sends separate approval notifications and idle-input attention notifications; re-entered active `Stop` hooks are filtered to avoid duplicate or premature completion messages. TRAE maps its top-level `Stop` hook to completion and only its `Notification` events matched as `permission_prompt` to approval; installation preserves unrelated and third-party hooks in the same global manifest. Qoder applies the same active-Stop filter. Hermes sends approval notifications only for human-facing CLI or gateway decisions and skips `approvals.mode=smart` automatic decisions. Oh My Pi ignores `agent_end` events that announce an automatic continuation and reports its native tool-approval event separately. When session logging is enabled, Mistral Vibe filters inherited subagent `post_agent_turn` events using their official `agents/<session>/messages.jsonl` layout; with logging disabled, its payload does not identify subagents, so fan-out can produce extra completion notifications. Aider, Auggie, Cline, Cursor, Gajae Code, Goose, Kiro, Mistral Vibe, OpenHands CLI, Pi, Qoder, VS Code Agent, and Windsurf currently expose completion notifications only through the installed integration.
+
+Claude Code Router starts the official Claude Code runtime and therefore discovers the same `~/.claude/settings.json` hooks. `vibe-pushover install --agent claude-router` (or the `ccr` alias) installs that shared lifecycle configuration using Claude as the notification source; it is idempotent with `install --agent claude`, so running both never creates duplicate hooks. Detection reports the Router target only when `~/.claude-code-router` exists rather than inferring it from a normal Claude installation.
 
 Because Aider supports only one `notifications-command`, installation refuses to replace an existing custom command. Gajae Code similarly supports one `completion.notifyCommand`; its installer also refuses to replace an unrelated command. Remove or compose the existing command yourself before retrying if you want `vibe-pushover` to own the setting. Cline supports one file per event in a hook root and likewise refuses to replace a non-`vibe-pushover` `TaskComplete` hook.
 
@@ -325,10 +330,11 @@ Profiles control how noticeable those messages are:
 | `quiet` | silent, normal priority | silent, normal priority |
 | `urgent` | suppressed | persistent sound, high priority |
 | `watch` | default Pushover sound, normal priority | persistent sound, high priority |
+| `on-call` | suppressed | persistent sound, emergency priority; retries every 60 seconds for up to 15 minutes or until acknowledged |
 
 Event-specific choices from `vibe-pushover sound` replace the sound cells above while preserving each profile's delivery and priority behavior. `default` omits the API sound override so the Pushover account/device preference is used; `reset` restores the table preset. Custom sound names work after they are uploaded for the application token's owning account. `quiet` remains silent regardless of an event-specific setting.
 
-Use the permanent `urgent` profile when completion messages should always stay off. Use temporary `focus 2h` when you only need a blocker-only window for the current work session. `preview --profile urgent --event turn-complete` reports that the delivery would be suppressed instead of showing a notification that will not be sent.
+Use the permanent `urgent` profile when completion messages should always stay off. Use the explicit `on-call` profile only when approval and attention events must repeatedly alert until acknowledged; it uses Pushover's documented [Emergency Priority](https://pushover.net/api#priority) and clears TTL because Pushover ignores TTL for emergency messages. Event-specific sound choices still apply without changing the retry schedule. Use temporary `focus 2h` when you only need a blocker-only window for the current work session. `preview --profile on-call --event approval-required` shows the retry and expiry schedule before you enable it.
 
 The notification icon is attached to the Pushover Application identified by the configured app token; it cannot be selected per message. To customize it, sign in to the [Pushover dashboard](https://pushover.net/), open the application whose API token you configured, and upload its icon. Pushover remains the host application, so operating-system surfaces may still show Pushover branding alongside the per-application icon.
 

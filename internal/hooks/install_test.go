@@ -127,6 +127,7 @@ func TestDetectedAgentsFindsEverySupportedConfigHome(t *testing.T) {
 		".autohand",
 		".augment",
 		".claude",
+		".claude-code-router",
 		filepath.Join("Documents", "Cline"),
 		".codebuddy",
 		".codewhale",
@@ -207,6 +208,40 @@ func TestDetectedAgentsDoesNotInferGeminiFromAntigravity(t *testing.T) {
 	if names["gemini"] {
 		t.Fatalf("Gemini was inferred from Antigravity: %#v", detected)
 	}
+}
+
+func TestDetectedAgentsOnlyReportsClaudeCodeRouterForItsOwnHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatalf("MkdirAll(Claude) error = %v", err)
+	}
+
+	detected, err := hooks.DetectedAgents()
+	if err != nil {
+		t.Fatalf("DetectedAgents() error = %v", err)
+	}
+	names := make(map[string]bool, len(detected))
+	for _, agent := range detected {
+		names[agent.Name] = true
+	}
+	if !names["claude"] || names["claude-router"] {
+		t.Fatalf("detected from only Claude home = %#v", detected)
+	}
+
+	if err := os.MkdirAll(filepath.Join(home, ".claude-code-router"), 0o700); err != nil {
+		t.Fatalf("MkdirAll(Claude Code Router) error = %v", err)
+	}
+	detected, err = hooks.DetectedAgents()
+	if err != nil {
+		t.Fatalf("DetectedAgents() after Router install error = %v", err)
+	}
+	for _, agent := range detected {
+		if agent.Name == "claude-router" {
+			return
+		}
+	}
+	t.Fatalf("Claude Code Router was not detected from its own home: %#v", detected)
 }
 
 func TestDetectedAgentsHonorsSupportedConfigOverrides(t *testing.T) {
@@ -3163,6 +3198,42 @@ func TestInstallIsIdempotent(t *testing.T) {
 	}
 	if string(after) != string(before) {
 		t.Fatal("second Install() rewrote the config")
+	}
+}
+
+func TestInstallClaudeCodeRouterSharesClaudeHooks(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	path, err := hooks.DefaultPath("claude-router")
+	if err != nil {
+		t.Fatalf("DefaultPath() error = %v", err)
+	}
+	wantPath := filepath.Join(home, ".claude", "settings.json")
+	if path != wantPath {
+		t.Fatalf("DefaultPath() = %q, want shared Claude path %q", path, wantPath)
+	}
+	changed, err := hooks.Install("claude-router", path, "/opt/bin/vibe-pushover", "")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !bytes.Contains(data, []byte("--agent claude --event turn-complete")) ||
+		!bytes.Contains(data, []byte("--agent claude --event approval-required")) {
+		t.Fatalf("Claude Code Router did not install shared Claude lifecycle commands: %s", data)
+	}
+	changed, err = hooks.Install("claude", path, "/opt/bin/vibe-pushover", "")
+	if err != nil {
+		t.Fatalf("Install(claude) error = %v", err)
+	}
+	if changed {
+		t.Fatal("Install(claude) changed shared Router hooks")
 	}
 }
 
