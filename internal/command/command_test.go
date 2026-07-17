@@ -80,6 +80,8 @@ func TestNotifyCommandSendsHookPayload(t *testing.T) {
 			"title":    r.Form.Get("title"),
 			"message":  r.Form.Get("message"),
 			"priority": r.Form.Get("priority"),
+			"sound":    r.Form.Get("sound"),
+			"ttl":      r.Form.Get("ttl"),
 		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
@@ -105,14 +107,20 @@ func TestNotifyCommandSendsHookPayload(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	got := received
-	if got["title"] != "Agent needs approval" {
+	if got["title"] != "⚠ Codex needs approval · demo" {
 		t.Fatalf("title = %q", got["title"])
 	}
-	if got["message"] != "codex needs approval in demo\nBash: make deploy" {
+	if got["message"] != "Bash\nmake deploy" {
 		t.Fatalf("message = %q", got["message"])
 	}
 	if got["priority"] != "1" {
 		t.Fatalf("priority = %q, want 1", got["priority"])
+	}
+	if got["sound"] != "persistent" {
+		t.Fatalf("sound = %q, want persistent", got["sound"])
+	}
+	if got["ttl"] != "1800" {
+		t.Fatalf("ttl = %q, want 1800", got["ttl"])
 	}
 }
 

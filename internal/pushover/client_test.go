@@ -25,6 +25,8 @@ func TestClientSendsMessage(t *testing.T) {
 			"title":    "Agent turn complete",
 			"message":  "codex finished in vibe-pushover",
 			"priority": "0",
+			"sound":    "none",
+			"ttl":      "3600",
 		}
 		for key, value := range want {
 			if got := r.Form.Get(key); got != value {
@@ -41,6 +43,8 @@ func TestClientSendsMessage(t *testing.T) {
 		Title:    "Agent turn complete",
 		Body:     "codex finished in vibe-pushover",
 		Priority: 0,
+		Sound:    "none",
+		TTL:      3600,
 	})
 	if err != nil {
 		t.Fatalf("Send() error = %v", err)

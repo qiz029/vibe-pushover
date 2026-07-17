@@ -19,6 +19,8 @@ type Message struct {
 	Title    string
 	Body     string
 	Priority int
+	Sound    string
+	TTL      int
 }
 
 type Client struct {
@@ -37,6 +39,12 @@ func (c *Client) Send(ctx context.Context, message Message) error {
 		"title":    {message.Title},
 		"message":  {message.Body},
 		"priority": {strconv.Itoa(message.Priority)},
+	}
+	if message.Sound != "" {
+		form.Set("sound", message.Sound)
+	}
+	if message.TTL > 0 {
+		form.Set("ttl", strconv.Itoa(message.TTL))
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, strings.NewReader(form.Encode()))
 	if err != nil {

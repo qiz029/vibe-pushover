@@ -108,7 +108,14 @@ printf '%s' '{"cwd":"/tmp/demo","tool_name":"Bash","tool_input":{"command":"make
   vibe-pushover notify --agent my-agent --event approval-required
 ```
 
-For completed turns, the notification includes the project directory and, when supplied, the last assistant message. Approval notifications include the tool name and command/reason when supplied. Pushover limits are enforced by truncating notification bodies to 1,024 Unicode characters.
+## Notification format and icon
+
+Notifications are intentionally compact for phones and watches:
+
+- A completed turn uses a title such as `✓ Codex finished · vibe-pushover` and only the first non-empty line of the agent's final message, truncated to 180 Unicode characters. It is silent and expires after one hour.
+- An approval request uses a title such as `⚠ Codex needs approval · vibe-pushover` and shows only the tool plus its command or reason, truncated to 300 Unicode characters. It is high priority, uses Pushover's `persistent` sound, and expires after 30 minutes.
+
+The notification icon is attached to the Pushover Application identified by the configured app token; it cannot be selected per message. To customize it, sign in to the [Pushover dashboard](https://pushover.net/), open the application whose API token you configured, and upload its icon. Pushover remains the host application, so operating-system surfaces may still show Pushover branding alongside the per-application icon.
 
 ## Development
 

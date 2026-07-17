@@ -196,6 +196,8 @@ func send(ctx context.Context, options Options, path string, message notificatio
 		Title:    message.Title,
 		Body:     message.Body,
 		Priority: message.Priority,
+		Sound:    message.Sound,
+		TTL:      message.TTL,
 	})
 }
 
