@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -145,7 +146,11 @@ func Build(agent string, event Event, payload map[string]any) (Message, error) {
 func hookTimestamp(payload map[string]any) int64 {
 	raw := payload["timestamp"]
 	if value, ok := raw.(string); ok {
-		parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(value))
+		value = strings.TrimSpace(value)
+		if numeric, err := strconv.ParseInt(value, 10, 64); err == nil {
+			return normalizeHookTimestamp(numeric)
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, value)
 		if err != nil {
 			return 0
 		}
@@ -156,7 +161,11 @@ func hookTimestamp(payload map[string]any) int64 {
 	case json.Number:
 		parsed, err := typed.Int64()
 		if err != nil {
-			return 0
+			floating, floatErr := typed.Float64()
+			if floatErr != nil {
+				return 0
+			}
+			parsed = int64(floating)
 		}
 		value = parsed
 	case float64:
@@ -168,18 +177,19 @@ func hookTimestamp(payload map[string]any) int64 {
 	default:
 		return 0
 	}
+	return normalizeHookTimestamp(value)
+}
+
+func normalizeHookTimestamp(value int64) int64 {
 	if value <= 0 {
 		return 0
 	}
-	switch {
-	case value >= 1_000_000_000_000_000_000:
-		value /= 1_000_000_000
-	case value >= 1_000_000_000_000_000:
-		value /= 1_000_000
-	case value >= 1_000_000_000_000:
-		value /= 1_000
+	for _, divisor := range []int64{1, 1_000, 1_000_000, 1_000_000_000} {
+		if normalized := plausibleHookTimestamp(value / divisor); normalized != 0 {
+			return normalized
+		}
 	}
-	return plausibleHookTimestamp(value)
+	return 0
 }
 
 func plausibleHookTimestamp(value int64) int64 {

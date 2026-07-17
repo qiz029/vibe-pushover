@@ -1,6 +1,7 @@
 package notification_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -413,6 +414,33 @@ func TestBuildPreservesHookEventTimestamp(t *testing.T) {
 	}
 	if got.Timestamp != 1_752_761_234 {
 		t.Fatalf("Timestamp = %d, want Unix seconds", got.Timestamp)
+	}
+}
+
+func TestBuildNormalizesSupportedUnixTimestampRepresentations(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		timestamp any
+		want      int64
+	}{
+		{name: "seconds", timestamp: float64(1_752_761_234), want: 1_752_761_234},
+		{name: "early milliseconds", timestamp: float64(946_684_800_000), want: 946_684_800},
+		{name: "microseconds", timestamp: float64(1_752_761_234_567_000), want: 1_752_761_234},
+		{name: "nanoseconds", timestamp: json.Number("1752761234567000000"), want: 1_752_761_234},
+		{name: "digit string", timestamp: "1752761234", want: 1_752_761_234},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := notification.Build("custom-agent", notification.EventTurnComplete, map[string]any{"timestamp": tt.timestamp})
+			if err != nil {
+				t.Fatalf("Build() error = %v", err)
+			}
+			if got.Timestamp != tt.want {
+				t.Fatalf("Timestamp = %d, want %d", got.Timestamp, tt.want)
+			}
+		})
 	}
 }
 

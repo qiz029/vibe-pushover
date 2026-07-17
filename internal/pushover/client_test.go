@@ -76,6 +76,25 @@ func TestClientReportsRejectedMessage(t *testing.T) {
 	}
 }
 
+func TestClientOmitsInvalidTimestamp(t *testing.T) {
+	t.Parallel()
+
+	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("ParseForm() error = %v", err)
+		}
+		if got := r.Form.Get("timestamp"); got != "" {
+			t.Fatalf("timestamp = %q, want invalid value omitted", got)
+		}
+		return jsonResponse(http.StatusOK, map[string]any{"status": 1}), nil
+	})}
+
+	client := pushover.NewClient(httpClient, "https://pushover.test/messages.json")
+	if err := client.Send(context.Background(), pushover.Message{Timestamp: 42}); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {

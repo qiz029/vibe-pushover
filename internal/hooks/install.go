@@ -423,8 +423,11 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	if agent == "codewhale" {
 		return installCodeWhaleHooks(path, executable, pushoverConfig)
 	}
-	if agent == "copilot" || agent == "vscode" {
-		return installCopilotHooks(path, executable, pushoverConfig)
+	if agent == "copilot" {
+		return installCopilotHooks(path, executable, pushoverConfig, true)
+	}
+	if agent == "vscode" {
+		return installCopilotHooks(path, executable, pushoverConfig, false)
 	}
 	if agent == "cursor" {
 		return installCursorHooks(path, executable, pushoverConfig)

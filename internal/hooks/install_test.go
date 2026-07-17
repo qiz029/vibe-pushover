@@ -2707,6 +2707,9 @@ func TestInstallAddsVSCodeAgentStopHook(t *testing.T) {
 	if got.Version != 1 || len(got.Hooks["agentStop"]) != 1 || len(got.Hooks["userPromptSubmitted"]) != 1 {
 		t.Fatalf("VS Code hooks = %#v", got.Hooks)
 	}
+	if len(got.Hooks["notification"]) != 0 {
+		t.Fatalf("VS Code install added Copilot CLI-only notification hooks: %#v", got.Hooks["notification"])
+	}
 	stop := got.Hooks["agentStop"][0]
 	if stop["type"] != "command" || stop["timeoutSec"] != float64(10) || stop["bash"] != "'/opt/bin/vibe-pushover' notify --agent copilot-vscode --event turn-complete --ignore-errors" {
 		t.Fatalf("VS Code Stop hook = %#v", stop)

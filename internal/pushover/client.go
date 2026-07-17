@@ -53,7 +53,7 @@ func (c *Client) Send(ctx context.Context, message Message) error {
 	if message.TTL > 0 {
 		form.Set("ttl", strconv.Itoa(message.TTL))
 	}
-	if message.Timestamp > 0 {
+	if validTimestamp(message.Timestamp) {
 		form.Set("timestamp", strconv.FormatInt(message.Timestamp, 10))
 	}
 	if message.URL != "" {
@@ -93,4 +93,8 @@ func (c *Client) Send(ctx context.Context, message Message) error {
 		return fmt.Errorf("Pushover rejected notification (HTTP %d): %s", resp.StatusCode, detail)
 	}
 	return nil
+}
+
+func validTimestamp(value int64) bool {
+	return value >= 946_684_800 && value < 4_102_444_800
 }

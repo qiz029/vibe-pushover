@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-func installCopilotHooks(path, executable, pushoverConfig string) (bool, error) {
+func installCopilotHooks(path, executable, pushoverConfig string, includeCLINotifications bool) (bool, error) {
 	root, err := readRoot(path)
 	if err != nil {
 		return false, err
@@ -26,16 +26,22 @@ func installCopilotHooks(path, executable, pushoverConfig string) (bool, error) 
 		return false, errors.New("Copilot hook manifest field \"hooks\" must be an object")
 	}
 
-	for _, spec := range []struct {
+	type copilotHookSpec struct {
 		hookName string
 		agent    string
 		event    string
 		matcher  string
-	}{
+	}
+	specs := []copilotHookSpec{
 		{hookName: "agentStop", agent: "copilot-vscode", event: "turn-complete"},
-		{hookName: "notification", agent: "copilot", event: "approval-required", matcher: "permission_prompt"},
-		{hookName: "notification", agent: "copilot", event: "attention-required", matcher: "elicitation_dialog"},
-	} {
+	}
+	if includeCLINotifications {
+		specs = append(specs,
+			copilotHookSpec{hookName: "notification", agent: "copilot", event: "approval-required", matcher: "permission_prompt"},
+			copilotHookSpec{hookName: "notification", agent: "copilot", event: "attention-required", matcher: "elicitation_dialog"},
+		)
+	}
+	for _, spec := range specs {
 		command := hookNotifyCommand(executable, spec.agent, spec.event, pushoverConfig)
 		entry := map[string]any{
 			"type":       "command",
