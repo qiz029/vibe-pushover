@@ -276,7 +276,7 @@ func TestDetectedAgentsFindsAdditionalOfficialCLICommands(t *testing.T) {
 
 func TestDetectedRunAgentsFindsWrapperCLIs(t *testing.T) {
 	binDir := t.TempDir()
-	for _, name := range []string{"cn", "crush", "duo", "mini", "pdx"} {
+	for _, name := range []string{"coderabbit", "cn", "crush", "duo", "mini", "opendev", "pdx"} {
 		path := filepath.Join(binDir, name)
 		if runtime.GOOS == "windows" {
 			path += ".exe"
@@ -295,9 +295,28 @@ func TestDetectedRunAgentsFindsWrapperCLIs(t *testing.T) {
 	for _, agent := range detected {
 		got = append(got, agent.Name)
 	}
-	want := []string{"continue", "crush", "gitlab-duo", "mini-swe-agent", "plandex"}
+	want := []string{"coderabbit", "continue", "crush", "gitlab-duo", "mini-swe-agent", "opendev", "plandex"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("DetectedRunAgents() = %#v, want %#v", got, want)
+	}
+}
+
+func TestDetectedRunAgentsDoesNotInferCodeRabbitFromShortAlias(t *testing.T) {
+	binDir := t.TempDir()
+	executable := filepath.Join(binDir, "cr")
+	if runtime.GOOS == "windows" {
+		executable += ".exe"
+		t.Setenv("PATHEXT", ".EXE")
+	}
+	if err := os.WriteFile(executable, nil, 0o755); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", executable, err)
+	}
+	t.Setenv("PATH", binDir)
+
+	for _, agent := range hooks.DetectedRunAgents() {
+		if agent.Name == "coderabbit" {
+			t.Fatal("ambiguous cr executable was treated as a CodeRabbit installation")
+		}
 	}
 }
 

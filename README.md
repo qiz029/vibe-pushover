@@ -5,7 +5,7 @@
 - finishes a turn or wrapped CLI session;
 - needs manual approval or otherwise needs your attention.
 
-The CLI currently integrates with 47 coding agents and compatible runtimes. Forty-two use their native hook, plugin, extension, automation, or notification-command surface: Aider, Amp, Antigravity CLI, Autohand Code, Augment Auggie, Claude Code, Claude Code Router, Cline, CodeBuddy Code, CodeWhale (formerly DeepSeek-TUI), Codex CLI, GitHub Copilot CLI, Craft Agents, Snowflake Cortex Code, Cursor, Factory Droid, DotCraft, Gajae Code, Gemini CLI, Goose, Grok Build, gptme, Hermes Agent, JetBrains Junie CLI, Kimi Code CLI, Kiro, Kilo Code, MiMo Code, Mistral Vibe, Oh My Pi, OpenHands CLI, OpenCode, Pi, Qoder, Qwen Code, Rovo Dev CLI, Tabnine CLI, TRAE, VS Code Agent, Windsurf, WorkBuddy, and ZCode. Continue CLI, Crush, GitLab Duo CLI, mini-SWE-agent, and Plandex are supported through the transparent `run` wrapper for session-exit and failure notifications. It is written in Go and uses [`urfave/cli`](https://github.com/urfave/cli).
+The CLI currently integrates with 49 coding agents and compatible runtimes. Forty-two use their native hook, plugin, extension, automation, or notification-command surface: Aider, Amp, Antigravity CLI, Autohand Code, Augment Auggie, Claude Code, Claude Code Router, Cline, CodeBuddy Code, CodeWhale (formerly DeepSeek-TUI), Codex CLI, GitHub Copilot CLI, Craft Agents, Snowflake Cortex Code, Cursor, Factory Droid, DotCraft, Gajae Code, Gemini CLI, Goose, Grok Build, gptme, Hermes Agent, JetBrains Junie CLI, Kimi Code CLI, Kiro, Kilo Code, MiMo Code, Mistral Vibe, Oh My Pi, OpenHands CLI, OpenCode, Pi, Qoder, Qwen Code, Rovo Dev CLI, Tabnine CLI, TRAE, VS Code Agent, Windsurf, WorkBuddy, and ZCode. CodeRabbit CLI, Continue CLI, Crush, GitLab Duo CLI, mini-SWE-agent, OpenDev, and Plandex are supported through the transparent `run` wrapper for session-exit and failure notifications. It is written in Go and uses [`urfave/cli`](https://github.com/urfave/cli).
 
 ## Install
 
@@ -201,7 +201,7 @@ vibe-pushover install --agent zcode
 
 `deepseek` is accepted as an install alias for `codewhale` to support existing DeepSeek-TUI users.
 
-`agents --detected` is a read-only preview of supported agent configuration homes and curated CLI executables found on the machine. This means a newly installed CLI can be recognized before its first run creates a config directory. The native-integration PATH signals are `aider`, `amp`, `autohand`, `auggie`, `claude`, `ccr`, `cline`, `codebuddy`, `codex`, `copilot`, `gemini`, `gptme`, `junie`, `kimi`, `kiro-cli`, `kilo`, `omp`, `openhands`, `opencode`, `pi`, `qodercli`, `qwen`, and `tabnine`; wrapper detection also recognizes `cn`, `crush`, `duo`, `mini`, `plandex`, and `pdx`. IDE-only agents and collision-prone command names such as `code`, `craft`, `goose`, and `vibe` remain configuration-marker-only to avoid false positives. A standalone `duo` binary is detected; a generic `glab` binary alone is not treated as proof that its optional Duo CLI component is installed.
+`agents --detected` is a read-only preview of supported agent configuration homes and curated CLI executables found on the machine. This means a newly installed CLI can be recognized before its first run creates a config directory. The native-integration PATH signals are `aider`, `amp`, `autohand`, `auggie`, `claude`, `ccr`, `cline`, `codebuddy`, `codex`, `copilot`, `gemini`, `gptme`, `junie`, `kimi`, `kiro-cli`, `kilo`, `omp`, `openhands`, `opencode`, `pi`, `qodercli`, `qwen`, and `tabnine`; wrapper detection also recognizes `coderabbit`, `cn`, `crush`, `duo`, `mini`, `opendev`, `plandex`, and `pdx`. IDE-only agents and collision-prone command names such as `code`, `craft`, `goose`, and `vibe` remain configuration-marker-only to avoid false positives. A standalone `duo` binary is detected; a generic `glab` binary alone is not treated as proof that its optional Duo CLI component is installed. CodeRabbit's official `cr` alias remains usable in an explicit wrapper command, but only the unambiguous `coderabbit` executable is auto-detected.
 
 `install --detected` installs every native-integration item in that preview, preserves unrelated settings and third-party hooks, and remains safe to repeat. Detected run-wrapper agents need no files installed and are reported separately. Detection never starts an agent or creates configuration for agents that were not found; a stale configuration home may still be reported. When `PI_CODING_AGENT_DIR` is set, a single matching `pi` or `omp` executable on PATH identifies the runtime. If both or neither executable is present, choose `--agent pi` or `--agent omp` explicitly because the shared directory override cannot distinguish the two runtimes safely.
 
@@ -216,6 +216,7 @@ vibe-pushover install --agent zcode
 | Claude Code Router | completion, approval through Claude Code | shared `~/.claude/settings.json` |
 | Cline | completion | `<Documents>/Cline/Hooks/TaskComplete` (`TaskComplete.ps1` on Windows); when Windows My Documents or Linux XDG Documents is redirected, also `$CLINE_DIR/hooks/TaskComplete[.ps1]` or `~/.cline/hooks/TaskComplete[.ps1]` for CLI |
 | CodeBuddy Code | completion, approval, failure attention | `~/.codebuddy/settings.json` (beta hook API) |
+| CodeRabbit CLI | session exit, process failure | `vibe-pushover run --agent coderabbit -- coderabbit ...` or `... -- cr ...` |
 | CodeWhale (DeepSeek-TUI) | completion, error attention | `$CODEWHALE_CONFIG_PATH`, `$DEEPSEEK_CONFIG_PATH`, `$CODEWHALE_HOME/config.toml`, existing `~/.codewhale/config.toml`, or legacy `~/.deepseek/config.toml` |
 | Codex CLI | completion, approval | `~/.codex/hooks.json` |
 | Continue CLI | session exit, process failure | `vibe-pushover run --agent continue -- cn ...` |
@@ -243,6 +244,7 @@ vibe-pushover install --agent zcode
 | Oh My Pi | completion, approval | `$PI_CODING_AGENT_DIR/extensions/vibe-pushover/index.ts` or `~/.omp/agent/extensions/vibe-pushover/index.ts` |
 | OpenHands CLI | completion | `~/.openhands/hooks.json` |
 | OpenCode | completion, approval, error attention | `$XDG_CONFIG_HOME/opencode/plugins/vibe-pushover.ts` or `~/.config/opencode/plugins/vibe-pushover.ts` |
+| OpenDev | session exit, process failure | `vibe-pushover run --agent opendev -- opendev ...` |
 | Pi | completion | `$PI_CODING_AGENT_DIR/extensions/vibe-pushover/index.ts` or `~/.pi/agent/extensions/vibe-pushover/index.ts` |
 | Plandex | session exit, process failure | `vibe-pushover run --agent plandex -- plandex ...` |
 | Qoder | completion | `~/.qoder/settings.json` |
@@ -301,9 +303,12 @@ For a terminal agent without a stable installable hook, place its command behind
 
 ```sh
 vibe-pushover run --agent continue -- cn -p "implement the next task"
+vibe-pushover run --agent coderabbit -- coderabbit review --plain
+vibe-pushover run --agent coderabbit -- cr review --plain
 vibe-pushover run --agent gitlab-duo -- duo
 vibe-pushover run --agent gitlab-duo -- glab duo cli
 vibe-pushover run --agent mini-swe-agent -- mini
+vibe-pushover run --agent opendev -- opendev
 vibe-pushover run --agent plandex -- plandex
 vibe-pushover run --agent crush -- crush
 vibe-pushover run --agent my-agent --after 2m -- my-agent --its-own-flags
@@ -311,7 +316,7 @@ vibe-pushover run --agent my-agent --after 2m -- my-agent --its-own-flags
 
 The wrapper attaches the original stdin, stdout, and stderr directly and preserves the child process exit status, including conventional `128+signal` status on macOS/Linux. Successful sessions shorter than 30 seconds stay quiet by default; change the threshold with `--after`, including `--after 0s` to notify every success. A failure always bypasses that duration threshold and uses the attention style, even when it happens immediately; global snooze and matching silence rules still apply. Wrapper bodies are lock-screen-friendly (`Completed · 45s` or `Failed · exit 17 · 2s`) and never copy command arguments, prompts, stdout, or stderr into Pushover. Notification transport failures are warnings and never change the agent's exit status.
 
-This fallback observes process exit, not individual turns or approval dialogs inside a long-running TUI. Use an installed native integration when one is available. Continue's documented headless `cn -p` mode and [mini-SWE-agent's `mini` CLI](https://mini-swe-agent.com/latest/quickstart/) are particularly good fits. GitLab Duo can be invoked through either its standalone `duo` binary or `glab duo cli`; only the standalone form is auto-detected to avoid treating every GitLab CLI installation as a Duo installation. Crush already has foreground-aware local completion and permission notifications; the wrapper adds a Pushover session-exit path without scraping its logs or conversation content.
+This fallback observes process exit, not individual turns or approval dialogs inside a long-running TUI. Use an installed native integration when one is available. Continue's documented headless `cn -p` mode, [CodeRabbit's foreground CLI review](https://docs.coderabbit.ai/cli/reference), and [mini-SWE-agent's `mini` CLI](https://mini-swe-agent.com/latest/quickstart/) are particularly good fits. CodeRabbit documents `coderabbit` and `cr` as equivalent entry points; only `coderabbit` is auto-detected because the short alias is collision-prone. GitLab Duo can be invoked through either its standalone `duo` binary or `glab duo cli`; only the standalone form is auto-detected to avoid treating every GitLab CLI installation as a Duo installation. [OpenDev](https://github.com/opendev-to/opendev) contains a lifecycle-hook crate, but its current CLI/runtime does not wire that crate into user sessions, so the wrapper reports only the lifecycle it can prove today. Crush already has foreground-aware local completion and permission notifications; the wrapper adds a Pushover session-exit path without scraping its logs or conversation content.
 
 Installed hooks use `--ignore-errors`: a network or Pushover failure is written to the agent's stderr but does not fail the agent turn.
 

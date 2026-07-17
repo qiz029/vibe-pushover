@@ -36,10 +36,12 @@ var detectionExecutables = map[string][]string{
 }
 
 var runDetectionExecutables = map[string][]string{
+	"coderabbit":     {"coderabbit"},
 	"continue":       {"cn"},
 	"crush":          {"crush"},
 	"gitlab-duo":     {"duo"},
 	"mini-swe-agent": {"mini"},
+	"opendev":        {"opendev"},
 	"plandex":        {"plandex", "pdx"},
 }
 

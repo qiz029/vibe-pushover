@@ -657,6 +657,7 @@ func TestBuildUsesProductNamesInNotificationTitles(t *testing.T) {
 
 	for agent, want := range map[string]string{
 		"autohand":       "✓ Autohand Code finished · demo",
+		"coderabbit":     "✓ CodeRabbit CLI finished · demo",
 		"craft":          "✓ Craft Agents finished · demo",
 		"cortex":         "✓ Cortex Code finished · demo",
 		"dotcraft":       "✓ DotCraft finished · demo",
@@ -668,6 +669,7 @@ func TestBuildUsesProductNamesInNotificationTitles(t *testing.T) {
 		"omp":            "✓ Oh My Pi finished · demo",
 		"openhands":      "✓ OpenHands finished · demo",
 		"opencode":       "✓ OpenCode finished · demo",
+		"opendev":        "✓ OpenDev finished · demo",
 		"qwen":           "✓ Qwen Code finished · demo",
 		"trae":           "✓ TRAE finished · demo",
 		"vscode":         "✓ VS Code finished · demo",

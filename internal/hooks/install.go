@@ -65,10 +65,12 @@ var agentCatalog = []AgentInfo{
 }
 
 var runAgentCatalog = []AgentInfo{
+	{Name: "coderabbit", DisplayName: "CodeRabbit CLI", Capabilities: "session exit+failure", Resource: "run wrapper"},
 	{Name: "continue", DisplayName: "Continue CLI", Capabilities: "session exit+failure", Resource: "run wrapper"},
 	{Name: "crush", DisplayName: "Crush", Capabilities: "session exit+failure", Resource: "run wrapper"},
 	{Name: "gitlab-duo", DisplayName: "GitLab Duo CLI", Capabilities: "session exit+failure", Resource: "run wrapper"},
 	{Name: "mini-swe-agent", DisplayName: "mini-SWE-agent", Capabilities: "session exit+failure", Resource: "run wrapper"},
+	{Name: "opendev", DisplayName: "OpenDev", Capabilities: "session exit+failure", Resource: "run wrapper"},
 	{Name: "plandex", DisplayName: "Plandex", Capabilities: "session exit+failure", Resource: "run wrapper"},
 }
 
@@ -99,6 +101,9 @@ func RunAgentInvocations(name string) ([]string, bool) {
 		return nil, false
 	}
 	invocations := []string{commands[0]}
+	if name == "coderabbit" {
+		invocations = append(invocations, "cr")
+	}
 	if name == "gitlab-duo" {
 		invocations = append(invocations, "glab duo cli")
 	}

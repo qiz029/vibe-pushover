@@ -2244,7 +2244,7 @@ func TestAgentsCommandShowsCapabilities(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"aider", "amp", "antigravity", "autohand", "auggie", "claude", "claude-router", "cline", "codebuddy", "codewhale", "codex", "continue", "copilot", "craft", "crush", "cortex", "cursor", "droid", "gemini", "gitlab-duo", "goose", "grok", "gptme", "hermes", "junie", "kimi", "kiro", "mimo", "mini-swe-agent", "mistral", "omp", "openhands", "opencode", "pi", "plandex", "qoder", "qwen", "rovo", "tabnine", "trae", "vscode", "windsurf", "workbuddy", "zcode",
+		"aider", "amp", "antigravity", "autohand", "auggie", "claude", "claude-router", "cline", "codebuddy", "coderabbit", "codewhale", "codex", "continue", "copilot", "craft", "crush", "cortex", "cursor", "droid", "gemini", "gitlab-duo", "goose", "grok", "gptme", "hermes", "junie", "kimi", "kiro", "mimo", "mini-swe-agent", "mistral", "omp", "openhands", "opencode", "opendev", "pi", "plandex", "qoder", "qwen", "rovo", "tabnine", "trae", "vscode", "windsurf", "workbuddy", "zcode",
 		"completion+approval", "completion+approval+attention", "completion+attention", "completion only", "session exit+failure", "run wrapper",
 	} {
 		if !strings.Contains(output, want) {
@@ -4156,10 +4156,12 @@ func TestInstallCommandGuidesRunWrapperAgents(t *testing.T) {
 	t.Parallel()
 
 	for agent, executable := range map[string]string{
+		"coderabbit":     "coderabbit",
 		"continue":       "cn",
 		"crush":          "crush",
 		"gitlab-duo":     "duo",
 		"mini-swe-agent": "mini",
+		"opendev":        "opendev",
 		"plandex":        "plandex",
 	} {
 		agent, executable := agent, executable
@@ -4180,6 +4182,9 @@ func TestInstallCommandGuidesRunWrapperAgents(t *testing.T) {
 			}
 			if agent == "gitlab-duo" && !strings.Contains(err.Error(), "vibe-pushover run --agent gitlab-duo -- glab duo cli") {
 				t.Fatalf("Run() error = %v, want GitLab CLI alternative", err)
+			}
+			if agent == "coderabbit" && !strings.Contains(err.Error(), "vibe-pushover run --agent coderabbit -- cr") {
+				t.Fatalf("Run() error = %v, want CodeRabbit short alias", err)
 			}
 		})
 	}
