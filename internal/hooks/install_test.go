@@ -18,6 +18,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func clearDetectionOverrides(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		"AUTOHAND_CONFIG", "CLINE_DIR", "CODEWHALE_CONFIG_PATH", "DEEPSEEK_CONFIG_PATH", "CODEWHALE_HOME",
+		"COPILOT_HOME", "CRAFT_CONFIG_DIR", "GEMINI_CLI_HOME", "GJC_CODING_AGENT_DIR", "GJC_CONFIG_DIR",
+		"GROK_HOME", "HERMES_HOME", "KIMI_CODE_HOME", "MIMOCODE_HOME", "PI_CODING_AGENT_DIR", "VIBE_HOME",
+	} {
+		t.Setenv(name, "")
+	}
+}
+
 func TestDefaultPathPiHonorsAgentDir(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "custom-pi-agent")
 	t.Setenv("PI_CODING_AGENT_DIR", dir)
@@ -109,6 +120,7 @@ func TestDefaultPathsCraftFindsEveryWorkspaceAndHonorsConfigDir(t *testing.T) {
 
 func TestDetectedAgentsFindsEverySupportedConfigHome(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("PATH", t.TempDir())
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("AUTOHAND_CONFIG", "")
@@ -187,8 +199,131 @@ func TestDetectedAgentsFindsEverySupportedConfigHome(t *testing.T) {
 	}
 }
 
+func TestDetectedAgentsFindsInstalledCLIsBeforeFirstRun(t *testing.T) {
+	clearDetectionOverrides(t)
+	home := filepath.Join(t.TempDir(), "empty-home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatalf("MkdirAll(HOME) error = %v", err)
+	}
+	binDir := t.TempDir()
+	for _, name := range []string{"ccr", "cline", "codebuddy", "junie", "kiro-cli", "kilo", "omp", "openhands", "opencode", "qodercli", "tabnine"} {
+		path := filepath.Join(binDir, name)
+		if runtime.GOOS == "windows" {
+			path += ".exe"
+		}
+		if err := os.WriteFile(path, nil, 0o755); err != nil {
+			t.Fatalf("WriteFile(%q) error = %v", path, err)
+		}
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("PATH", binDir)
+	if runtime.GOOS == "windows" {
+		t.Setenv("PATHEXT", ".EXE")
+	}
+
+	detected, err := hooks.DetectedAgents()
+	if err != nil {
+		t.Fatalf("DetectedAgents() error = %v", err)
+	}
+	got := make([]string, 0, len(detected))
+	for _, agent := range detected {
+		got = append(got, agent.Name)
+	}
+	want := []string{"claude-router", "cline", "codebuddy", "junie", "kiro", "kilo", "omp", "openhands", "opencode", "qoder", "tabnine"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DetectedAgents() = %#v, want %#v", got, want)
+	}
+}
+
+func TestDetectedAgentsFindsAdditionalOfficialCLICommands(t *testing.T) {
+	clearDetectionOverrides(t)
+	home := filepath.Join(t.TempDir(), "empty-home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatalf("MkdirAll(HOME) error = %v", err)
+	}
+	binDir := t.TempDir()
+	for _, name := range []string{"aider", "amp", "autohand", "auggie", "claude", "codex", "copilot", "gemini", "kimi", "pi", "qwen"} {
+		path := filepath.Join(binDir, name)
+		if runtime.GOOS == "windows" {
+			path += ".exe"
+		}
+		if err := os.WriteFile(path, nil, 0o755); err != nil {
+			t.Fatalf("WriteFile(%q) error = %v", path, err)
+		}
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("PATH", binDir)
+	if runtime.GOOS == "windows" {
+		t.Setenv("PATHEXT", ".EXE")
+	}
+
+	detected, err := hooks.DetectedAgents()
+	if err != nil {
+		t.Fatalf("DetectedAgents() error = %v", err)
+	}
+	got := make([]string, 0, len(detected))
+	for _, agent := range detected {
+		got = append(got, agent.Name)
+	}
+	want := []string{"aider", "amp", "autohand", "auggie", "claude", "codex", "copilot", "gemini", "kimi", "pi", "qwen"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DetectedAgents() = %#v, want %#v", got, want)
+	}
+}
+
+func TestDetectedAgentsRequiresUnambiguousExecutableWithSharedPiOverride(t *testing.T) {
+	clearDetectionOverrides(t)
+	home := filepath.Join(t.TempDir(), "empty-home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatalf("MkdirAll(HOME) error = %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(t.TempDir(), "shared-agent-home"))
+
+	for _, test := range []struct {
+		name        string
+		executables []string
+		want        []string
+	}{
+		{name: "pi only", executables: []string{"pi"}, want: []string{"pi"}},
+		{name: "omp only", executables: []string{"omp"}, want: []string{"omp"}},
+		{name: "both", executables: []string{"pi", "omp"}, want: []string{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			binDir := t.TempDir()
+			for _, name := range test.executables {
+				path := filepath.Join(binDir, name)
+				if runtime.GOOS == "windows" {
+					path += ".exe"
+					t.Setenv("PATHEXT", ".EXE")
+				}
+				if err := os.WriteFile(path, nil, 0o755); err != nil {
+					t.Fatalf("WriteFile(%q) error = %v", path, err)
+				}
+			}
+			t.Setenv("PATH", binDir)
+
+			detected, err := hooks.DetectedAgents()
+			if err != nil {
+				t.Fatalf("DetectedAgents() error = %v", err)
+			}
+			got := make([]string, 0, len(detected))
+			for _, agent := range detected {
+				got = append(got, agent.Name)
+			}
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("DetectedAgents() = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestDetectedAgentsDoesNotInferGeminiFromAntigravity(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("PATH", t.TempDir())
 	t.Setenv("HOME", home)
 	if err := os.MkdirAll(filepath.Join(home, ".gemini", "antigravity-cli"), 0o700); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
@@ -212,6 +347,7 @@ func TestDetectedAgentsDoesNotInferGeminiFromAntigravity(t *testing.T) {
 
 func TestDetectedAgentsOnlyReportsClaudeCodeRouterForItsOwnHome(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("PATH", t.TempDir())
 	t.Setenv("HOME", home)
 	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
 		t.Fatalf("MkdirAll(Claude) error = %v", err)
@@ -251,6 +387,7 @@ func TestDetectedAgentsHonorsSupportedConfigOverrides(t *testing.T) {
 	}
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("PATH", t.TempDir())
 
 	overrideRoot := t.TempDir()
 	values := map[string]string{

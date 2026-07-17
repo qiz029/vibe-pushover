@@ -691,7 +691,7 @@ func agentsCommand(options Options) *cli.Command {
 		Name:  "agents",
 		Usage: "list supported coding agents and notification capabilities",
 		Flags: []cli.Flag{
-			&cli.BoolFlag{Name: "detected", Usage: "show only supported agents detected on this machine"},
+			&cli.BoolFlag{Name: "detected", Usage: "show agents with local config or a curated CLI executable on PATH"},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			agents := hooks.Agents()
@@ -887,7 +887,7 @@ func installCommand(options Options) *cli.Command {
 		Usage: "install notification hooks or an extension for a local agent",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "agent", Usage: "agent to configure; run `vibe-pushover agents` for the list"},
-			&cli.BoolFlag{Name: "detected", Usage: "configure every supported agent detected on this machine"},
+			&cli.BoolFlag{Name: "detected", Usage: "configure every agent with local config or a curated CLI executable on PATH"},
 			&cli.StringFlag{Name: "agent-config", Usage: "override the agent hook or extension path"},
 			&cli.StringFlag{Name: "binary", Usage: "override the vibe-pushover executable path", Value: options.Executable},
 			configFlag(),

@@ -22,6 +22,17 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+func clearAgentDetectionOverrides(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		"AUTOHAND_CONFIG", "CLINE_DIR", "CODEWHALE_CONFIG_PATH", "DEEPSEEK_CONFIG_PATH", "CODEWHALE_HOME",
+		"COPILOT_HOME", "CRAFT_CONFIG_DIR", "GEMINI_CLI_HOME", "GJC_CODING_AGENT_DIR", "GJC_CONFIG_DIR",
+		"GROK_HOME", "HERMES_HOME", "KIMI_CODE_HOME", "MIMOCODE_HOME", "PI_CODING_AGENT_DIR", "VIBE_HOME",
+	} {
+		t.Setenv(name, "")
+	}
+}
+
 func TestSetupCommandInteractivelyStoresCredentials(t *testing.T) {
 	t.Parallel()
 
@@ -2075,6 +2086,7 @@ func TestAgentsCommandShowsCapabilities(t *testing.T) {
 
 func TestAgentsCommandCanShowOnlyDetectedAgents(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("PATH", t.TempDir())
 	t.Setenv("HOME", home)
 	t.Setenv("AUTOHAND_CONFIG", "")
 	for _, marker := range []string{".codex", ".zcode"} {
@@ -2836,6 +2848,7 @@ func TestInstallCommandReportsDotCraftTrustStep(t *testing.T) {
 
 func TestInstallCommandConfiguresDetectedAgents(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("PATH", t.TempDir())
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("AUTOHAND_CONFIG", "")
@@ -2885,6 +2898,82 @@ func TestInstallCommandConfiguresDetectedAgents(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("undetected Claude config was created: %v", err)
+	}
+}
+
+func TestInstallCommandConfiguresInstalledCLIBeforeItsFirstRun(t *testing.T) {
+	clearAgentDetectionOverrides(t)
+	home := filepath.Join(t.TempDir(), "empty-home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatalf("MkdirAll(HOME) error = %v", err)
+	}
+	binDir := t.TempDir()
+	name := "codex"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+		t.Setenv("PATHEXT", ".EXE")
+	}
+	if err := os.WriteFile(filepath.Join(binDir, name), nil, 0o755); err != nil {
+		t.Fatalf("WriteFile(codex) error = %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("PATH", binDir)
+
+	stdout := &bytes.Buffer{}
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: stdout, Stderr: &bytes.Buffer{}, Executable: "/opt/bin/vibe-pushover",
+	})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "install", "--detected"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Installed codex hooks") {
+		t.Fatalf("install output = %q, want Codex installation", stdout.String())
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".codex", "hooks.json"))
+	if err != nil {
+		t.Fatalf("ReadFile(Codex hooks) error = %v", err)
+	}
+	if !bytes.Contains(data, []byte("notify --agent codex --event turn-complete")) {
+		t.Fatalf("Codex hooks do not contain vibe-pushover command:\n%s", data)
+	}
+}
+
+func TestInstallCommandSkipsAmbiguousSharedPiOverride(t *testing.T) {
+	clearAgentDetectionOverrides(t)
+	home := filepath.Join(t.TempDir(), "empty-home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatalf("MkdirAll(HOME) error = %v", err)
+	}
+	binDir := t.TempDir()
+	for _, name := range []string{"pi", "omp"} {
+		path := filepath.Join(binDir, name)
+		if runtime.GOOS == "windows" {
+			path += ".exe"
+			t.Setenv("PATHEXT", ".EXE")
+		}
+		if err := os.WriteFile(path, nil, 0o755); err != nil {
+			t.Fatalf("WriteFile(%q) error = %v", path, err)
+		}
+	}
+	sharedHome := filepath.Join(t.TempDir(), "shared-agent-home")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("PATH", binDir)
+	t.Setenv("PI_CODING_AGENT_DIR", sharedHome)
+
+	stdout := &bytes.Buffer{}
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: stdout, Stderr: &bytes.Buffer{}, Executable: "/opt/bin/vibe-pushover",
+	})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "install", "--detected"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := stdout.String(), "No supported agent installations detected\n"; got != want {
+		t.Fatalf("install output = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(sharedHome, "extensions", "vibe-pushover", "index.ts")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ambiguous Pi/OMP extension was created: %v", err)
 	}
 }
 

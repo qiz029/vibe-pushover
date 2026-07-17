@@ -4,12 +4,39 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 )
 
+var detectionExecutables = map[string][]string{
+	"aider":         {"aider"},
+	"amp":           {"amp"},
+	"autohand":      {"autohand"},
+	"auggie":        {"auggie"},
+	"claude":        {"claude"},
+	"claude-router": {"ccr"},
+	"cline":         {"cline"},
+	"codebuddy":     {"codebuddy"},
+	"codex":         {"codex"},
+	"copilot":       {"copilot"},
+	"gemini":        {"gemini"},
+	"junie":         {"junie"},
+	"kimi":          {"kimi"},
+	"kiro":          {"kiro-cli"},
+	"kilo":          {"kilo"},
+	"omp":           {"omp"},
+	"openhands":     {"openhands"},
+	"opencode":      {"opencode"},
+	"pi":            {"pi"},
+	"qoder":         {"qodercli"},
+	"qwen":          {"qwen"},
+	"tabnine":       {"tabnine"},
+}
+
 // DetectedAgents returns supported agents whose local configuration home
-// already exists. It never creates files or probes agent processes.
+// exists or whose curated CLI executable is on PATH. It never creates files
+// or starts an agent process.
 func DetectedAgents() ([]AgentInfo, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -66,14 +93,21 @@ func DetectedAgents() ([]AgentInfo, error) {
 		"zcode":       {filepath.Join(home, ".zcode")},
 	}
 	markers["claude-router"] = []string{filepath.Join(home, ".claude-code-router")}
+	sharedPiOverride := os.Getenv("PI_CODING_AGENT_DIR") != ""
+	ambiguousPiExecutables := sharedPiOverride && hasAgentExecutable("omp") && hasAgentExecutable("pi")
 	detected := make([]AgentInfo, 0, len(markers))
 	for _, agent := range agentCatalog {
+		sharedPiRuntime := agent.Name == "omp" || agent.Name == "pi"
+		if hasAgentExecutable(agent.Name) && !(sharedPiRuntime && ambiguousPiExecutables) {
+			detected = append(detected, agent)
+			continue
+		}
 		agentMarkers := append([]string(nil), markers[agent.Name]...)
 		resolvedPaths, err := DefaultPaths(agent.Name)
 		if err != nil {
 			return nil, fmt.Errorf("resolve %s detection paths: %w", agent.DisplayName, err)
 		}
-		ambiguousPiOverride := (agent.Name == "omp" || agent.Name == "pi") && os.Getenv("PI_CODING_AGENT_DIR") != ""
+		ambiguousPiOverride := sharedPiRuntime && sharedPiOverride
 		if ambiguousPiOverride {
 			// Pi and Oh My Pi share this override and install incompatible files
 			// at the same path, so directory existence cannot identify the runtime.
@@ -104,6 +138,15 @@ func DetectedAgents() ([]AgentInfo, error) {
 		}
 	}
 	return detected, nil
+}
+
+func hasAgentExecutable(agent string) bool {
+	for _, executable := range detectionExecutables[agent] {
+		if _, err := exec.LookPath(executable); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func overrideDetectionMarkers(agent string, resolvedPaths []string) ([]string, error) {

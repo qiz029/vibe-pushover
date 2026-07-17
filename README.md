@@ -191,7 +191,9 @@ vibe-pushover install --agent zcode
 
 `deepseek` is accepted as an install alias for `codewhale` to support existing DeepSeek-TUI users.
 
-`agents --detected` is a read-only preview of supported agent configuration homes found on the machine. `install --detected` installs every item in that preview, preserves unrelated settings and third-party hooks, and remains safe to repeat. Detection never starts an agent or creates configuration for agents that were not found; a stale configuration home may still be reported. When `PI_CODING_AGENT_DIR` is set, choose `--agent pi` or `--agent omp` explicitly because both runtimes use the same override and cannot be distinguished safely from the directory alone.
+`agents --detected` is a read-only preview of supported agent configuration homes and curated CLI executables found on the machine. This means a newly installed CLI can be recognized before its first run creates a config directory. The exact PATH signals are `aider`, `amp`, `autohand`, `auggie`, `claude`, `ccr`, `cline`, `codebuddy`, `codex`, `copilot`, `gemini`, `junie`, `kimi`, `kiro-cli`, `kilo`, `omp`, `openhands`, `opencode`, `pi`, `qodercli`, `qwen`, and `tabnine`. IDE-only agents and collision-prone command names such as `code`, `craft`, `goose`, and `vibe` remain configuration-marker-only to avoid false positives.
+
+`install --detected` installs every item in that preview, preserves unrelated settings and third-party hooks, and remains safe to repeat. Detection never starts an agent or creates configuration for agents that were not found; a stale configuration home may still be reported. When `PI_CODING_AGENT_DIR` is set, a single matching `pi` or `omp` executable on PATH identifies the runtime. If both or neither executable is present, choose `--agent pi` or `--agent omp` explicitly because the shared directory override cannot distinguish the two runtimes safely.
 
 | Agent | Notifications | Default integration path |
 | --- | --- | --- |
