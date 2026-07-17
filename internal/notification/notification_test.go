@@ -64,6 +64,20 @@ func TestBuildIgnoresUnsafeSupplementaryURL(t *testing.T) {
 	}
 }
 
+func TestBuildAttentionUsesTerminationReason(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("antigravity", notification.EventAttentionRequired, map[string]any{
+		"terminationReason": "max_steps_exceeded",
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Body != "max_steps_exceeded" {
+		t.Fatalf("Body = %q, want termination reason", got.Body)
+	}
+}
+
 func TestBuildUsesSafeSupplementaryURLAfterUnsafeCandidate(t *testing.T) {
 	t.Parallel()
 

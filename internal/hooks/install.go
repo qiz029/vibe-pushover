@@ -22,7 +22,7 @@ type AgentInfo struct {
 var agentCatalog = []AgentInfo{
 	{Name: "aider", DisplayName: "Aider", Capabilities: "completion only (macOS/Linux)", Resource: "config+script"},
 	{Name: "amp", DisplayName: "Amp", Capabilities: "completion+approval+attention", Resource: "plugin"},
-	{Name: "antigravity", DisplayName: "Antigravity CLI", Capabilities: "completion only", Resource: "plugin"},
+	{Name: "antigravity", DisplayName: "Antigravity CLI", Capabilities: "completion+attention", Resource: "plugin"},
 	{Name: "auggie", DisplayName: "Augment Auggie", Capabilities: "completion only", Resource: "hooks+script"},
 	{Name: "claude", DisplayName: "Claude Code", Capabilities: "completion+approval", Resource: "hooks"},
 	{Name: "cline", DisplayName: "Cline", Capabilities: "completion only", Resource: "hooks"},
@@ -114,6 +114,41 @@ func DefaultPath(agent string) (string, error) {
 			return filepath.Join(dataDir, "config.toml"), nil
 		}
 	}
+	if agent == "codewhale" {
+		for _, name := range []string{"CODEWHALE_CONFIG_PATH", "DEEPSEEK_CONFIG_PATH"} {
+			if configPath := strings.TrimSpace(os.Getenv(name)); configPath != "" {
+				configPath, err := expandHome(configPath)
+				if err != nil {
+					return "", fmt.Errorf("resolve CodeWhale config path: %w", err)
+				}
+				return configPath, nil
+			}
+		}
+		if codeWhaleHome := strings.TrimSpace(os.Getenv("CODEWHALE_HOME")); codeWhaleHome != "" {
+			codeWhaleHome, err := expandHome(codeWhaleHome)
+			if err != nil {
+				return "", fmt.Errorf("resolve CodeWhale home: %w", err)
+			}
+			return filepath.Join(codeWhaleHome, "config.toml"), nil
+		}
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("find home directory: %w", err)
+		}
+		primary := filepath.Join(home, ".codewhale", "config.toml")
+		if _, err := os.Stat(primary); err == nil {
+			return primary, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("inspect CodeWhale config: %w", err)
+		}
+		legacy := filepath.Join(home, ".deepseek", "config.toml")
+		if _, err := os.Stat(legacy); err == nil {
+			return legacy, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("inspect legacy CodeWhale config: %w", err)
+		}
+		return primary, nil
+	}
 	if agent == "mistral" {
 		if vibeHome := os.Getenv("VIBE_HOME"); vibeHome != "" {
 			vibeHome, err := expandHome(vibeHome)
@@ -183,8 +218,6 @@ func DefaultPath(agent string) (string, error) {
 		return filepath.Join(home, ".augment", "settings.json"), nil
 	case "codebuddy":
 		return filepath.Join(home, ".codebuddy", "settings.json"), nil
-	case "codewhale":
-		return filepath.Join(home, ".codewhale", "config.toml"), nil
 	case "codex":
 		return filepath.Join(home, ".codex", "hooks.json"), nil
 	case "copilot":
@@ -426,7 +459,11 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 			} else if agent == "trae" {
 				displayName = "TRAE"
 			}
-			command, err = hookNotifyCommandForOS(runtime.GOOS, agent, displayName, executable, spec.Event, pushoverConfig)
+			flags := []string(nil)
+			if spec.Flag != "" {
+				flags = append(flags, spec.Flag)
+			}
+			command, err = hookNotifyCommandForOSWithFlags(runtime.GOOS, agent, displayName, executable, spec.Event, pushoverConfig, flags...)
 			if err != nil {
 				return false, err
 			}
@@ -534,7 +571,7 @@ func genericHookSpecs(agent string) []hookSpec {
 	switch agent {
 	case "codebuddy":
 		return []hookSpec{
-			{Name: "Stop", Event: "turn-complete", Timeout: 10},
+			{Name: "Stop", Event: "turn-complete", Timeout: 10, Flag: "--skip-active-stop"},
 			{Name: "StopFailure", Event: "attention-required", Timeout: 10},
 			{Name: "PermissionRequest", Event: "approval-required", Timeout: 10},
 		}

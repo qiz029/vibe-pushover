@@ -1265,7 +1265,7 @@ func TestPreviewCommandShowsNotificationWithoutCredentials(t *testing.T) {
 	var stdout bytes.Buffer
 	app := command.New(command.Options{
 		Stdin:  bytes.NewBufferString(`{"cwd":"/tmp/demo","last_assistant_message":"All tests pass.\nMore detail.","session_url":"https://example.com/agent/42"}`),
-		Stdout: &stdout, Stderr: &bytes.Buffer{},
+		Stdout: &stdout, Stderr: &bytes.Buffer{}, DefaultConfigPath: filepath.Join(t.TempDir(), "missing.json"),
 	})
 	if err := app.Run(context.Background(), []string{
 		"vibe-pushover", "preview", "--agent", "gemini", "--event", "turn-complete", "--profile", "watch",
@@ -1278,6 +1278,31 @@ func TestPreviewCommandShowsNotificationWithoutCredentials(t *testing.T) {
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("preview output does not contain %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestPreviewCommandUsesDefaultConfigWhenAvailable(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key", NotificationProfile: "watch", TurnCompleteSound: "magic",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	var stdout bytes.Buffer
+	app := command.New(command.Options{
+		Stdin: bytes.NewBufferString(`{"cwd":"/tmp/demo"}`), Stdout: &stdout, Stderr: &bytes.Buffer{}, DefaultConfigPath: path,
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "preview", "--agent", "codex", "--event", "turn-complete",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, want := range []string{"Priority: 0", "Sound: magic"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("preview output does not contain %q:\n%s", want, stdout.String())
 		}
 	}
 }
@@ -1318,7 +1343,7 @@ func TestPreviewCommandExplicitQuietProfileOverridesConfiguredSound(t *testing.T
 	}
 	var stdout bytes.Buffer
 	app := command.New(command.Options{
-		Stdin: bytes.NewBufferString(`{"cwd":"/tmp/demo"}`), Stdout: &stdout, Stderr: &bytes.Buffer{},
+		Stdin: bytes.NewBufferString(`{"cwd":"/tmp/demo"}`), Stdout: &stdout, Stderr: &bytes.Buffer{}, DefaultConfigPath: filepath.Join(t.TempDir(), "missing.json"),
 	})
 	if err := app.Run(context.Background(), []string{
 		"vibe-pushover", "preview", "--agent", "codex", "--event", "turn-complete",
@@ -1336,7 +1361,7 @@ func TestPreviewCommandShowsUrgentProfileCompletionIsSuppressed(t *testing.T) {
 
 	var stdout bytes.Buffer
 	app := command.New(command.Options{
-		Stdin: bytes.NewBufferString(`{"cwd":"/tmp/demo"}`), Stdout: &stdout, Stderr: &bytes.Buffer{},
+		Stdin: bytes.NewBufferString(`{"cwd":"/tmp/demo"}`), Stdout: &stdout, Stderr: &bytes.Buffer{}, DefaultConfigPath: filepath.Join(t.TempDir(), "missing.json"),
 	})
 	if err := app.Run(context.Background(), []string{
 		"vibe-pushover", "preview", "--agent", "codex", "--event", "turn-complete", "--profile", "urgent",
@@ -1357,9 +1382,10 @@ func TestPreviewUsesProcessDirectoryWhenHookPayloadHasNoWorkspace(t *testing.T) 
 	}
 	var stdout bytes.Buffer
 	app := command.New(command.Options{
-		Stdin:  &bytes.Buffer{},
-		Stdout: &stdout,
-		Stderr: &bytes.Buffer{},
+		Stdin:             &bytes.Buffer{},
+		Stdout:            &stdout,
+		Stderr:            &bytes.Buffer{},
+		DefaultConfigPath: filepath.Join(t.TempDir(), "missing.json"),
 	})
 	if err := app.Run(context.Background(), []string{
 		"vibe-pushover", "preview", "--agent", "kiro", "--event", "turn-complete",
@@ -1377,9 +1403,10 @@ func TestPreviewUsesOpenHandsWorkingDirectoryWithoutProcessDirectoryOverride(t *
 
 	var stdout bytes.Buffer
 	app := command.New(command.Options{
-		Stdin:  bytes.NewBufferString(`{"working_dir":"/tmp/openhands-demo"}`),
-		Stdout: &stdout,
-		Stderr: &bytes.Buffer{},
+		Stdin:             bytes.NewBufferString(`{"working_dir":"/tmp/openhands-demo"}`),
+		Stdout:            &stdout,
+		Stderr:            &bytes.Buffer{},
+		DefaultConfigPath: filepath.Join(t.TempDir(), "missing.json"),
 	})
 	if err := app.Run(context.Background(), []string{
 		"vibe-pushover", "preview", "--agent", "openhands", "--event", "turn-complete",
@@ -1400,9 +1427,10 @@ func TestPreviewUsesProcessDirectoryWhenHookWorkspaceIsEmpty(t *testing.T) {
 	}
 	var stdout bytes.Buffer
 	app := command.New(command.Options{
-		Stdin:  bytes.NewBufferString(`{"cwd":"","workspace_roots":[]}`),
-		Stdout: &stdout,
-		Stderr: &bytes.Buffer{},
+		Stdin:             bytes.NewBufferString(`{"cwd":"","workspace_roots":[]}`),
+		Stdout:            &stdout,
+		Stderr:            &bytes.Buffer{},
+		DefaultConfigPath: filepath.Join(t.TempDir(), "missing.json"),
 	})
 	if err := app.Run(context.Background(), []string{
 		"vibe-pushover", "preview", "--agent", "kiro", "--event", "turn-complete",
@@ -1909,7 +1937,7 @@ command = "./prepare.sh"
 		`name = "third-party"`,
 		`event = "turn_end"`,
 		`event = "on_error"`,
-		`--agent codewhale --event turn-complete`,
+		`--agent codewhale --event turn-complete --ignore-errors --skip-codewhale-noncompletion`,
 		`--agent codewhale --event attention-required`,
 	} {
 		if !bytes.Contains(first, []byte(want)) {
@@ -1925,6 +1953,35 @@ command = "./prepare.sh"
 	}
 	if !bytes.Equal(first, second) {
 		t.Fatalf("CodeWhale install is not idempotent:\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+}
+
+func TestNotifyCommandSkipsFailedCodeWhaleTurnEnd(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	if err := config.Save(configPath, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	requests := 0
+	app := command.New(command.Options{
+		Stdin:  bytes.NewBufferString(`{"event":"turn_end","status":"failed","error":"provider error"}`),
+		Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, DedupePath: filepath.Join(dir, "dedupe.json"),
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			requests++
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"status":1}`)), Header: make(http.Header)}, nil
+		})},
+		Endpoint: "https://pushover.test/messages.json",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--agent", "codewhale", "--event", "turn-complete",
+		"--skip-codewhale-noncompletion", "--config", configPath,
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if requests != 0 {
+		t.Fatalf("Pushover requests = %d, want 0", requests)
 	}
 }
 
@@ -2090,7 +2147,7 @@ func TestInstallCommandCreatesCodeBuddyLifecycleHooks(t *testing.T) {
 		`"Stop"`,
 		`"StopFailure"`,
 		`"PermissionRequest"`,
-		"notify --agent codebuddy --event turn-complete --ignore-errors",
+		"notify --agent codebuddy --event turn-complete --ignore-errors --skip-active-stop",
 		"notify --agent codebuddy --event attention-required --ignore-errors",
 		"notify --agent codebuddy --event approval-required --ignore-errors",
 	} {
@@ -2136,7 +2193,8 @@ func TestInstallCommandCreatesAntigravityCompletionPlugin(t *testing.T) {
 	}
 	for _, want := range []string{
 		`"vibe-pushover"`, `"Stop"`, `"type": "command"`, `"timeout": 10`,
-		"notify --agent antigravity --event turn-complete --ignore-errors",
+		"notify --agent antigravity --event turn-complete --ignore-errors --skip-antigravity-noncompletion",
+		"notify --agent antigravity --event attention-required --ignore-errors --only-antigravity-failure",
 	} {
 		if !bytes.Contains(hookData, []byte(want)) {
 			t.Fatalf("Antigravity hooks do not contain %q:\n%s", want, hookData)
@@ -2152,6 +2210,50 @@ func TestInstallCommandCreatesAntigravityCompletionPlugin(t *testing.T) {
 	}
 	if !bytes.Equal(after, before) {
 		t.Fatalf("second install changed Antigravity hooks:\n%s", after)
+	}
+}
+
+func TestNotifyCommandFiltersAntigravityStopStates(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name, event, flag, payload string
+		wantRequests               int
+	}{
+		{name: "background work remains", event: "turn-complete", flag: "--skip-antigravity-noncompletion", payload: `{"fullyIdle":false,"terminationReason":"model_stop"}`},
+		{name: "failure is not completion", event: "turn-complete", flag: "--skip-antigravity-noncompletion", payload: `{"fullyIdle":true,"terminationReason":"error","error":"boom"}`},
+		{name: "normal stop is not attention", event: "attention-required", flag: "--only-antigravity-failure", payload: `{"fullyIdle":true,"terminationReason":"model_stop"}`},
+		{name: "failure needs attention", event: "attention-required", flag: "--only-antigravity-failure", payload: `{"fullyIdle":true,"terminationReason":"max_steps_exceeded"}`, wantRequests: 1},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "config.json")
+			if err := config.Save(configPath, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+				t.Fatalf("Save() error = %v", err)
+			}
+			requests := 0
+			app := command.New(command.Options{
+				Stdin: bytes.NewBufferString(tt.payload), Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{},
+				DedupePath: filepath.Join(dir, "dedupe.json"),
+				HTTPClient: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+					requests++
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"status":1}`)), Header: make(http.Header)}, nil
+				})},
+				Endpoint: "https://pushover.test/messages.json",
+			})
+			if err := app.Run(context.Background(), []string{
+				"vibe-pushover", "notify", "--agent", "antigravity", "--event", tt.event,
+				"--config", configPath, tt.flag,
+			}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if requests != tt.wantRequests {
+				t.Fatalf("Pushover requests = %d, want %d", requests, tt.wantRequests)
+			}
+		})
 	}
 }
 

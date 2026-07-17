@@ -93,7 +93,7 @@ func Build(agent string, event Event, payload map[string]any) (Message, error) {
 		}, event, payload), nil
 	case EventAttentionRequired:
 		body := "Agent needs your attention."
-		if detail := firstLine(firstString(payload, "message", "reason", "error", "title")); detail != "" {
+		if detail := firstLine(firstString(payload, "message", "reason", "error", "title", "terminationReason", "status")); detail != "" {
 			body = detail
 		}
 		return withSupplementaryAction(Message{

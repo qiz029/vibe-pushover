@@ -36,20 +36,28 @@ func installCodeWhaleHooks(path, executable, pushoverConfig string) (bool, error
 		{name: "vibe-pushover-turn-complete", event: "turn_end", kind: "turn-complete"},
 		{name: "vibe-pushover-attention-required", event: "on_error", kind: "attention-required"},
 	}
-	configuredNames, err := codeWhaleHookNames(content)
-	if err != nil {
-		return false, err
-	}
 	changed := false
 	for _, spec := range specs {
-		_, _, managed, err := codeWhaleManagedBlockBounds(content, spec)
+		start, finish, managed, err := codeWhaleManagedBlockBounds(content, spec)
 		if err != nil {
 			return false, err
 		}
-		if !managed && configuredNames[spec.name] {
+		unownedContent := content
+		if managed {
+			unownedContent = content[:start] + "\n" + content[finish:]
+		}
+		configuredNames, err := codeWhaleHookNames(unownedContent)
+		if err != nil {
+			return false, err
+		}
+		if configuredNames[spec.name] {
 			return false, fmt.Errorf("CodeWhale hook name %q is already owned by another configuration", spec.name)
 		}
-		command, err := hookNotifyCommandForOS(runtime.GOOS, "codewhale", "CodeWhale", executable, spec.kind, pushoverConfig)
+		flags := []string(nil)
+		if spec.kind == "turn-complete" {
+			flags = append(flags, "--skip-codewhale-noncompletion")
+		}
+		command, err := hookNotifyCommandForOSWithFlags(runtime.GOOS, "codewhale", "CodeWhale", executable, spec.kind, pushoverConfig, flags...)
 		if err != nil {
 			return false, err
 		}

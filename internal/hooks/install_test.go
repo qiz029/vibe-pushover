@@ -117,6 +117,44 @@ func TestDefaultPathsForAdditionalAgents(t *testing.T) {
 	}
 }
 
+func TestDefaultPathCodeWhaleUsesLegacyConfigWhenPrimaryIsMissing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEWHALE_HOME", "")
+	t.Setenv("CODEWHALE_CONFIG_PATH", "")
+	t.Setenv("DEEPSEEK_CONFIG_PATH", "")
+	legacy := filepath.Join(home, ".deepseek", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(legacy, []byte("provider = \"deepseek\"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	got, err := hooks.DefaultPath("codewhale")
+	if err != nil {
+		t.Fatalf("DefaultPath() error = %v", err)
+	}
+	if got != legacy {
+		t.Fatalf("DefaultPath() = %q, want legacy %q", got, legacy)
+	}
+}
+
+func TestDefaultPathCodeWhaleHonorsOfficialOverrides(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEWHALE_HOME", "~/whale-home")
+	t.Setenv("CODEWHALE_CONFIG_PATH", "~/explicit/config.toml")
+	t.Setenv("DEEPSEEK_CONFIG_PATH", "~/legacy-explicit/config.toml")
+	got, err := hooks.DefaultPath("codewhale")
+	if err != nil {
+		t.Fatalf("DefaultPath() error = %v", err)
+	}
+	want := filepath.Join(home, "explicit", "config.toml")
+	if got != want {
+		t.Fatalf("DefaultPath() = %q, want %q", got, want)
+	}
+}
+
 func TestInstallConfiguresAiderNotificationCommand(t *testing.T) {
 	t.Parallel()
 
@@ -2628,6 +2666,30 @@ not a managed block
 	}
 	if root["note"] != "# BEGIN vibe-pushover hook: vibe-pushover-turn-complete\nnot a managed block\n# END vibe-pushover hook: vibe-pushover-turn-complete\n" {
 		t.Fatalf("multiline string changed: %#v", root["note"])
+	}
+}
+
+func TestInstallCodeWhaleRefusesDuplicateManagedNameOutsideBlock(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	first := `# BEGIN vibe-pushover hook: vibe-pushover-turn-complete
+[[hooks.hooks]]
+name = "vibe-pushover-turn-complete"
+event = "turn_end"
+command = "'/opt/bin/vibe-pushover' notify --agent codewhale --event turn-complete --ignore-errors"
+# END vibe-pushover hook: vibe-pushover-turn-complete
+
+[[hooks.hooks]]
+name = "vibe-pushover-turn-complete"
+event = "turn_end"
+command = "./other.sh"
+`
+	if err := os.WriteFile(path, []byte(first), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := hooks.Install("codewhale", path, "/opt/bin/vibe-pushover", ""); err == nil {
+		t.Fatal("Install() accepted a duplicate managed CodeWhale hook name")
 	}
 }
 

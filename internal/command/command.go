@@ -22,15 +22,16 @@ import (
 )
 
 type Options struct {
-	Version    string
-	Stdin      io.Reader
-	Stdout     io.Writer
-	Stderr     io.Writer
-	HTTPClient *http.Client
-	Endpoint   string
-	Executable string
-	DedupePath string
-	Now        func() time.Time
+	Version           string
+	Stdin             io.Reader
+	Stdout            io.Writer
+	Stderr            io.Writer
+	HTTPClient        *http.Client
+	Endpoint          string
+	Executable        string
+	DedupePath        string
+	DefaultConfigPath string
+	Now               func() time.Time
 }
 
 func New(options Options) *cli.Command {
@@ -376,15 +377,26 @@ func previewCommand(options Options) *cli.Command {
 			}
 			profile := strings.ToLower(strings.TrimSpace(cmd.String("profile")))
 			var credentials config.Credentials
-			configured := cmd.String("config") != ""
-			if configured {
-				credentials, err = config.Load(cmd.String("config"))
-				if err != nil {
-					return err
+			configured := false
+			previewConfigPath := cmd.String("config")
+			explicitConfig := previewConfigPath != ""
+			if previewConfigPath == "" {
+				previewConfigPath = options.DefaultConfigPath
+				if previewConfigPath == "" {
+					previewConfigPath, err = config.DefaultPath()
+					if err != nil {
+						return err
+					}
 				}
+			}
+			credentials, err = config.Load(previewConfigPath)
+			if err == nil {
+				configured = true
 				if !cmd.IsSet("profile") {
 					profile = credentials.NotificationProfile
 				}
+			} else if explicitConfig || !errors.Is(err, os.ErrNotExist) {
+				return err
 			}
 			if !notification.ShouldDeliver(event, profile) {
 				_, err = fmt.Fprintf(options.Stdout, "Delivery: suppressed by %s profile\n", profile)
@@ -543,6 +555,9 @@ func notifyCommand(options Options) *cli.Command {
 			&cli.BoolFlag{Name: "skip-noninteractive-approval", Hidden: true},
 			&cli.BoolFlag{Name: "skip-mistral-subagent", Hidden: true},
 			&cli.BoolFlag{Name: "skip-cline-subagent", Hidden: true},
+			&cli.BoolFlag{Name: "skip-antigravity-noncompletion", Hidden: true},
+			&cli.BoolFlag{Name: "only-antigravity-failure", Hidden: true},
+			&cli.BoolFlag{Name: "skip-codewhale-noncompletion", Hidden: true},
 			configFlag(),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -601,6 +616,23 @@ func notifyCommand(options Options) *cli.Command {
 					return nil
 				}
 			}
+			if cmd.Bool("skip-antigravity-noncompletion") {
+				fullyIdle, _ := payload["fullyIdle"].(bool)
+				reason, _ := payload["terminationReason"].(string)
+				if !fullyIdle || strings.TrimSpace(reason) != "model_stop" || antigravityStopFailed(payload) {
+					return nil
+				}
+			}
+			if cmd.Bool("only-antigravity-failure") && !antigravityStopFailed(payload) {
+				return nil
+			}
+			if cmd.Bool("skip-codewhale-noncompletion") {
+				status, _ := payload["status"].(string)
+				errorMessage, _ := payload["error"].(string)
+				if strings.TrimSpace(status) != "completed" || strings.TrimSpace(errorMessage) != "" {
+					return nil
+				}
+			}
 			event := notification.Event(cmd.String("event"))
 			message, err := notification.Build(cmd.String("agent"), event, payload)
 			if err == nil {
@@ -646,6 +678,20 @@ func notifyCommand(options Options) *cli.Command {
 			}
 			return err
 		},
+	}
+}
+
+func antigravityStopFailed(payload map[string]any) bool {
+	errorMessage, _ := payload["error"].(string)
+	if strings.TrimSpace(errorMessage) != "" {
+		return true
+	}
+	reason, _ := payload["terminationReason"].(string)
+	switch strings.ToLower(strings.TrimSpace(reason)) {
+	case "error", "max_steps_exceeded":
+		return true
+	default:
+		return false
 	}
 }
 

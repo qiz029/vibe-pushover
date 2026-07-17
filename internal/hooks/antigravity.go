@@ -30,14 +30,23 @@ func installAntigravityPlugin(path, executable, pushoverConfig string) (bool, er
 		root[antigravityHookName] = hookDefinition
 	}
 
-	command, err := hookNotifyCommandForOS(runtime.GOOS, "antigravity", "Antigravity CLI", executable, "turn-complete", pushoverConfig)
+	completionCommand, err := hookNotifyCommandForOSWithFlags(runtime.GOOS, "antigravity", "Antigravity CLI", executable, "turn-complete", pushoverConfig, "--skip-antigravity-noncompletion")
 	if err != nil {
 		return false, err
 	}
-	stops, hooksChanged, err := upsertAntigravityStop(hookDefinition["Stop"], command)
+	attentionCommand, err := hookNotifyCommandForOSWithFlags(runtime.GOOS, "antigravity", "Antigravity CLI", executable, "attention-required", pushoverConfig, "--only-antigravity-failure")
 	if err != nil {
 		return false, err
 	}
+	stops, completionChanged, err := upsertAntigravityStop(hookDefinition["Stop"], "turn-complete", "--skip-antigravity-noncompletion", completionCommand)
+	if err != nil {
+		return false, err
+	}
+	stops, attentionChanged, err := upsertAntigravityStop(stops, "attention-required", "--only-antigravity-failure", attentionCommand)
+	if err != nil {
+		return false, err
+	}
+	hooksChanged := completionChanged || attentionChanged
 	if hooksChanged {
 		hookDefinition["Stop"] = stops
 		if err := writeJSON(hooksPath, root); err != nil {
@@ -70,7 +79,7 @@ func prepareAntigravityManifest(path string) (map[string]any, bool, error) {
 	return root, true, nil
 }
 
-func upsertAntigravityStop(value any, wantCommand string) ([]any, bool, error) {
+func upsertAntigravityStop(value any, event, flag, wantCommand string) ([]any, bool, error) {
 	var stops []any
 	if value != nil {
 		var ok bool
@@ -85,7 +94,11 @@ func upsertAntigravityStop(value any, wantCommand string) ([]any, bool, error) {
 			continue
 		}
 		current, _ := handler["command"].(string)
-		if !isOwnedCommand(current, "antigravity", "turn-complete") {
+		owned := isOwnedCommandWithFlag(current, "antigravity", event, flag)
+		if event == "turn-complete" {
+			owned = owned || isOwnedCommand(current, "antigravity", event)
+		}
+		if !owned {
 			continue
 		}
 		if handler["type"] == "command" && current == wantCommand && fmt.Sprint(handler["timeout"]) == "10" {
