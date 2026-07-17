@@ -448,13 +448,15 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	if agent == "zcode" {
 		return installZCodeHooks(path, executable, pushoverConfig)
 	}
-	if agent == "codebuddy" || agent == "dotcraft" || agent == "grok" || agent == "trae" || agent == "workbuddy" {
+	if agent == "codebuddy" || agent == "dotcraft" || agent == "grok" || agent == "junie" || agent == "trae" || agent == "workbuddy" {
 		var err error
 		displayName := "CodeBuddy Code"
 		if agent == "dotcraft" {
 			displayName = "DotCraft"
 		} else if agent == "grok" {
 			displayName = "Grok Build"
+		} else if agent == "junie" {
+			displayName = "JetBrains Junie CLI"
 		} else if agent == "trae" {
 			displayName = "TRAE"
 		} else if agent == "workbuddy" {

@@ -1144,6 +1144,44 @@ func TestInstallAddsJunieLifecycleHooksWithoutControllingApproval(t *testing.T) 
 	}
 }
 
+func TestInstallJuniePreservesConfigSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior is platform-specific")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "shared-junie-config.json")
+	path := filepath.Join(dir, ".junie", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(target, []byte(`{"model":"sonnet"}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+
+	if _, err := hooks.Install("junie", path, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("Lstat() error = %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("Install() replaced Junie config symlink")
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("ReadFile(target) error = %v", err)
+	}
+	if !bytes.Contains(data, []byte(`"Stop"`)) || !bytes.Contains(data, []byte(`"model": "sonnet"`)) {
+		t.Fatalf("symlink target not updated or sibling config lost: %s", data)
+	}
+}
+
 func TestInstallAddsQwenCompletionApprovalAndIdleAttentionHooks(t *testing.T) {
 	t.Parallel()
 
