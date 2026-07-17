@@ -1501,6 +1501,9 @@ func TestInstallCommandCreatesKimiHooks(t *testing.T) {
 func TestInstallCommandCreatesSharedClineHookForIDEAndCLI(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	// Keep the default Documents fallback deterministic on Linux runners that
+	// may have xdg-user-dir installed with host-specific configuration.
+	t.Setenv("PATH", "")
 
 	var stdout bytes.Buffer
 	app := command.New(command.Options{
@@ -1563,6 +1566,9 @@ func TestInstallCommandCreatesSharedClineHookForIDEAndCLI(t *testing.T) {
 func TestInstallCommandRefusesUnownedClineHook(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	// Keep the default Documents fallback deterministic on Linux runners that
+	// may have xdg-user-dir installed with host-specific configuration.
+	t.Setenv("PATH", "")
 
 	hook := filepath.Join(home, "Documents", "Cline", "Hooks", "TaskComplete")
 	if err := os.MkdirAll(filepath.Dir(hook), 0o700); err != nil {

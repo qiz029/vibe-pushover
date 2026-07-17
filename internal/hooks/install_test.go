@@ -72,6 +72,9 @@ func TestDefaultPathMiMoRejectsRelativeMiMoCodeHome(t *testing.T) {
 func TestDefaultPathsForAdditionalAgents(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	// Keep the default Documents fallback deterministic on Linux runners that
+	// may have xdg-user-dir installed with host-specific configuration.
+	t.Setenv("PATH", "")
 	t.Setenv("COPILOT_HOME", "~/copilot-home")
 	t.Setenv("GEMINI_CLI_HOME", "~/gemini-home")
 	t.Setenv("XDG_CONFIG_HOME", "~/.xdg")
