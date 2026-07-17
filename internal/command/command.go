@@ -972,6 +972,10 @@ func testCommand(options Options) *cli.Command {
 			now := options.Now()
 			cwd, _ := os.Getwd()
 			payload := map[string]any{"cwd": cwd, "message": cmd.String("message")}
+			message, err := notification.Build("vibe-pushover", event, payload)
+			if err != nil {
+				return err
+			}
 			if credentials.IsSilenced("vibe-pushover", string(event), notification.ProjectName(payload)) && !cmd.Bool("force") {
 				_, err = fmt.Fprintf(options.Stdout,
 					"Test %s notification suppressed by a matching silence rule; use --force to send\n", event,
@@ -999,10 +1003,6 @@ func testCommand(options Options) *cli.Command {
 					"Test %s notification suppressed during quiet hours %s-%s; use --force to send\n",
 					event, credentials.QuietHoursStart, credentials.QuietHoursEnd,
 				)
-				return err
-			}
-			message, err := notification.Build("vibe-pushover", event, payload)
-			if err != nil {
 				return err
 			}
 			if !notification.ShouldDeliver(event, credentials.NotificationProfile) {

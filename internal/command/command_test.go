@@ -307,6 +307,25 @@ func TestTestCommandReportsSilenceRuleSuppressionAndSupportsForce(t *testing.T) 
 	}
 }
 
+func TestTestCommandRejectsInvalidEventBeforeSilenceSuppression(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key",
+		SilenceRules: []config.SilenceRule{{Agent: "vibe-pushover", Event: "all"}},
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	app := command.New(command.Options{Stdin: &bytes.Buffer{}, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}})
+	err := app.Run(context.Background(), []string{
+		"vibe-pushover", "test", "--config", path, "--event", "typo",
+	})
+	if err == nil || !strings.Contains(err.Error(), "event must be") {
+		t.Fatalf("Run() error = %v, want event validation error", err)
+	}
+}
+
 func TestTestCommandSupportsCompletionAndAttentionStyles(t *testing.T) {
 	t.Parallel()
 
