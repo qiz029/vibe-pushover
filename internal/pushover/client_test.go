@@ -28,6 +28,7 @@ func TestClientSendsMessage(t *testing.T) {
 			"priority":  "0",
 			"sound":     "none",
 			"ttl":       "3600",
+			"timestamp": "1752761234",
 			"url":       "https://example.com/agent/sessions/42",
 			"url_title": "Open result",
 		}
@@ -41,16 +42,17 @@ func TestClientSendsMessage(t *testing.T) {
 
 	client := pushover.NewClient(httpClient, "https://pushover.test/messages.json")
 	err := client.Send(context.Background(), pushover.Message{
-		AppToken: "app-token",
-		UserKey:  "user-key",
-		Device:   "iphone,ipad",
-		Title:    "Agent turn complete",
-		Body:     "codex finished in vibe-pushover",
-		Priority: 0,
-		Sound:    "none",
-		TTL:      3600,
-		URL:      "https://example.com/agent/sessions/42",
-		URLTitle: "Open result",
+		AppToken:  "app-token",
+		UserKey:   "user-key",
+		Device:    "iphone,ipad",
+		Title:     "Agent turn complete",
+		Body:      "codex finished in vibe-pushover",
+		Priority:  0,
+		Sound:     "none",
+		TTL:       3600,
+		Timestamp: 1_752_761_234,
+		URL:       "https://example.com/agent/sessions/42",
+		URLTitle:  "Open result",
 	})
 	if err != nil {
 		t.Fatalf("Send() error = %v", err)

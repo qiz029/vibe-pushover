@@ -402,6 +402,48 @@ func TestBuildNotificationsAlwaysHaveABody(t *testing.T) {
 	}
 }
 
+func TestBuildPreservesHookEventTimestamp(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("copilot", notification.EventTurnComplete, map[string]any{
+		"timestamp": float64(1_752_761_234_567),
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Timestamp != 1_752_761_234 {
+		t.Fatalf("Timestamp = %d, want Unix seconds", got.Timestamp)
+	}
+}
+
+func TestBuildParsesRFC3339HookTimestamp(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("vscode", notification.EventTurnComplete, map[string]any{
+		"timestamp": "2025-07-17T12:34:56.789Z",
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Timestamp != 1_752_755_696 {
+		t.Fatalf("Timestamp = %d, want RFC3339 Unix seconds", got.Timestamp)
+	}
+}
+
+func TestBuildIgnoresNonEventTimestamp(t *testing.T) {
+	t.Parallel()
+
+	got, err := notification.Build("custom-agent", notification.EventTurnComplete, map[string]any{
+		"timestamp": float64(42),
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got.Timestamp != 0 {
+		t.Fatalf("Timestamp = %d, want an implausible event time ignored", got.Timestamp)
+	}
+}
+
 func TestApplyDetailMinimalHidesHookPayloadContent(t *testing.T) {
 	t.Parallel()
 

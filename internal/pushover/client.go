@@ -14,16 +14,17 @@ import (
 const DefaultEndpoint = "https://api.pushover.net/1/messages.json"
 
 type Message struct {
-	AppToken string
-	UserKey  string
-	Device   string
-	Title    string
-	Body     string
-	URL      string
-	URLTitle string
-	Priority int
-	Sound    string
-	TTL      int
+	AppToken  string
+	UserKey   string
+	Device    string
+	Title     string
+	Body      string
+	URL       string
+	URLTitle  string
+	Timestamp int64
+	Priority  int
+	Sound     string
+	TTL       int
 }
 
 type Client struct {
@@ -51,6 +52,9 @@ func (c *Client) Send(ctx context.Context, message Message) error {
 	}
 	if message.TTL > 0 {
 		form.Set("ttl", strconv.Itoa(message.TTL))
+	}
+	if message.Timestamp > 0 {
+		form.Set("timestamp", strconv.FormatInt(message.Timestamp, 10))
 	}
 	if message.URL != "" {
 		form.Set("url", message.URL)

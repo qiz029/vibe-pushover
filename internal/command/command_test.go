@@ -835,6 +835,7 @@ func TestNotifyCommandSendsHookPayload(t *testing.T) {
 			"priority":  r.Form.Get("priority"),
 			"sound":     r.Form.Get("sound"),
 			"ttl":       r.Form.Get("ttl"),
+			"timestamp": r.Form.Get("timestamp"),
 			"url":       r.Form.Get("url"),
 			"url_title": r.Form.Get("url_title"),
 		}
@@ -846,7 +847,7 @@ func TestNotifyCommandSendsHookPayload(t *testing.T) {
 	})}
 
 	app := command.New(command.Options{
-		Stdin:      bytes.NewBufferString(`{"cwd":"/tmp/demo","tool_name":"Bash","tool_input":{"command":"make deploy"},"session_url":"https://example.com/agent/42"}`),
+		Stdin:      bytes.NewBufferString(`{"cwd":"/tmp/demo","timestamp":1752761234567,"tool_name":"Bash","tool_input":{"command":"make deploy"},"session_url":"https://example.com/agent/42"}`),
 		Stdout:     &bytes.Buffer{},
 		Stderr:     &bytes.Buffer{},
 		HTTPClient: httpClient,
@@ -876,6 +877,9 @@ func TestNotifyCommandSendsHookPayload(t *testing.T) {
 	}
 	if got["ttl"] != "1800" {
 		t.Fatalf("ttl = %q, want 1800", got["ttl"])
+	}
+	if got["timestamp"] != "1752761234" {
+		t.Fatalf("timestamp = %q, want hook event time", got["timestamp"])
 	}
 	if got["url"] != "https://example.com/agent/42" || got["url_title"] != "Open agent" {
 		t.Fatalf("supplementary action = %q (%q)", got["url"], got["url_title"])

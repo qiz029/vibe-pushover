@@ -1,11 +1,13 @@
 package notification
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -18,13 +20,14 @@ const (
 )
 
 type Message struct {
-	Title    string
-	Body     string
-	URL      string
-	URLTitle string
-	Priority int
-	Sound    string
-	TTL      int
+	Title     string
+	Body      string
+	URL       string
+	URLTitle  string
+	Timestamp int64
+	Priority  int
+	Sound     string
+	TTL       int
 }
 
 func ShouldDeliver(event Event, profile string) bool {
@@ -101,11 +104,12 @@ func Build(agent string, event Event, payload map[string]any) (Message, error) {
 			body = detail
 		}
 		return withSupplementaryAction(Message{
-			Title:    truncate(fmt.Sprintf("✓ %s finished%s", displayName(agent), titleProjectSuffix(project)), 250),
-			Body:     truncate(body, 180),
-			Priority: -1,
-			Sound:    "none",
-			TTL:      3600,
+			Title:     truncate(fmt.Sprintf("✓ %s finished%s", displayName(agent), titleProjectSuffix(project)), 250),
+			Body:      truncate(body, 180),
+			Timestamp: hookTimestamp(payload),
+			Priority:  -1,
+			Sound:     "none",
+			TTL:       3600,
 		}, event, payload), nil
 	case EventApprovalRequired:
 		body := "Approval requested."
@@ -113,11 +117,12 @@ func Build(agent string, event Event, payload map[string]any) (Message, error) {
 			body = detail
 		}
 		return withSupplementaryAction(Message{
-			Title:    truncate(fmt.Sprintf("⚠ %s needs approval%s", displayName(agent), titleProjectSuffix(project)), 250),
-			Body:     truncate(body, 300),
-			Priority: 1,
-			Sound:    "persistent",
-			TTL:      1800,
+			Title:     truncate(fmt.Sprintf("⚠ %s needs approval%s", displayName(agent), titleProjectSuffix(project)), 250),
+			Body:      truncate(body, 300),
+			Timestamp: hookTimestamp(payload),
+			Priority:  1,
+			Sound:     "persistent",
+			TTL:       1800,
 		}, event, payload), nil
 	case EventAttentionRequired:
 		body := "Agent needs your attention."
@@ -125,15 +130,67 @@ func Build(agent string, event Event, payload map[string]any) (Message, error) {
 			body = detail
 		}
 		return withSupplementaryAction(Message{
-			Title:    truncate(fmt.Sprintf("⚠ %s needs attention%s", displayName(agent), titleProjectSuffix(project)), 250),
-			Body:     truncate(body, 300),
-			Priority: 1,
-			Sound:    "persistent",
-			TTL:      1800,
+			Title:     truncate(fmt.Sprintf("⚠ %s needs attention%s", displayName(agent), titleProjectSuffix(project)), 250),
+			Body:      truncate(body, 300),
+			Timestamp: hookTimestamp(payload),
+			Priority:  1,
+			Sound:     "persistent",
+			TTL:       1800,
 		}, event, payload), nil
 	default:
 		return Message{}, errors.New("event must be turn-complete, approval-required, or attention-required")
 	}
+}
+
+func hookTimestamp(payload map[string]any) int64 {
+	raw := payload["timestamp"]
+	if value, ok := raw.(string); ok {
+		parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(value))
+		if err != nil {
+			return 0
+		}
+		return plausibleHookTimestamp(parsed.Unix())
+	}
+	var value int64
+	switch typed := raw.(type) {
+	case json.Number:
+		parsed, err := typed.Int64()
+		if err != nil {
+			return 0
+		}
+		value = parsed
+	case float64:
+		value = int64(typed)
+	case int64:
+		value = typed
+	case int:
+		value = int64(typed)
+	default:
+		return 0
+	}
+	if value <= 0 {
+		return 0
+	}
+	switch {
+	case value >= 1_000_000_000_000_000_000:
+		value /= 1_000_000_000
+	case value >= 1_000_000_000_000_000:
+		value /= 1_000_000
+	case value >= 1_000_000_000_000:
+		value /= 1_000
+	}
+	return plausibleHookTimestamp(value)
+}
+
+func plausibleHookTimestamp(value int64) int64 {
+	const (
+		earliest = int64(946_684_800)   // 2000-01-01T00:00:00Z
+		latest   = int64(4_102_444_800) // 2100-01-01T00:00:00Z
+	)
+	if value < earliest || value >= latest {
+		return 0
+	}
+	return value
 }
 
 func attentionDetail(agent string, payload map[string]any) string {

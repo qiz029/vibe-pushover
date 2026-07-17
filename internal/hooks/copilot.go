@@ -33,7 +33,8 @@ func installCopilotHooks(path, executable, pushoverConfig string) (bool, error) 
 		matcher  string
 	}{
 		{hookName: "agentStop", agent: "copilot-vscode", event: "turn-complete"},
-		{hookName: "notification", agent: "copilot", event: "attention-required", matcher: "permission_prompt|elicitation_dialog"},
+		{hookName: "notification", agent: "copilot", event: "approval-required", matcher: "permission_prompt"},
+		{hookName: "notification", agent: "copilot", event: "attention-required", matcher: "elicitation_dialog"},
 	} {
 		command := hookNotifyCommand(executable, spec.agent, spec.event, pushoverConfig)
 		entry := map[string]any{

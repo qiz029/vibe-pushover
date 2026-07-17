@@ -2137,19 +2137,26 @@ func TestInstallAddsCopilotPersonalHooks(t *testing.T) {
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
-	if got.Version != 1 || len(got.Hooks["agentStop"]) != 1 || len(got.Hooks["notification"]) != 1 {
+	if got.Version != 1 || len(got.Hooks["agentStop"]) != 1 || len(got.Hooks["notification"]) != 2 {
 		t.Fatalf("Copilot manifest = %#v", got)
 	}
-	for _, event := range []string{"agentStop", "notification"} {
-		if got.Hooks[event][0]["type"] != "command" || got.Hooks[event][0]["timeoutSec"] != float64(10) {
-			t.Fatalf("%s hook = %#v", event, got.Hooks[event][0])
+	for event, entries := range got.Hooks {
+		for _, entry := range entries {
+			if entry["type"] != "command" || entry["timeoutSec"] != float64(10) {
+				t.Fatalf("%s hook = %#v", event, entry)
+			}
 		}
 	}
-	if got.Hooks["notification"][0]["matcher"] != "permission_prompt|elicitation_dialog" {
-		t.Fatalf("notification matcher = %#v", got.Hooks["notification"][0]["matcher"])
+	notificationEvents := map[string]string{}
+	for _, entry := range got.Hooks["notification"] {
+		command, _ := entry["bash"].(string)
+		notificationEvents[fmt.Sprint(entry["matcher"])] = command
 	}
-	if !bytes.Contains(data, []byte("--event attention-required")) {
-		t.Fatalf("Copilot attention hook is not wired correctly: %s", data)
+	if !strings.Contains(notificationEvents["permission_prompt"], "--event approval-required") {
+		t.Fatalf("Copilot permission notification is not wired as approval: %#v", notificationEvents)
+	}
+	if !strings.Contains(notificationEvents["elicitation_dialog"], "--event attention-required") {
+		t.Fatalf("Copilot elicitation notification is not wired as attention: %#v", notificationEvents)
 	}
 	if !bytes.Contains(data, []byte("--config '/tmp/pushover.json'")) {
 		t.Fatalf("Copilot hooks do not use custom config: %s", data)
@@ -2160,6 +2167,51 @@ func TestInstallAddsCopilotPersonalHooks(t *testing.T) {
 	}
 	if changed {
 		t.Fatal("second Install() changed Copilot hooks")
+	}
+}
+
+func TestInstallMigratesCopilotCombinedNotificationWithoutChangingThirdPartyHooks(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".copilot", "hooks", "vibe-pushover.json")
+	original := `{"version":1,"hooks":{"notification":[{"type":"command","bash":"'/old/bin/vibe-pushover' notify --agent copilot --event attention-required --ignore-errors","matcher":"permission_prompt|elicitation_dialog","timeoutSec":10},{"type":"command","bash":"personal-notifier","matcher":"agent_idle","timeoutSec":4}]}}`
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := hooks.Install("copilot", path, "/opt/bin/vibe-pushover", ""); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var got struct {
+		Hooks map[string][]map[string]any `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if len(got.Hooks["notification"]) != 3 {
+		t.Fatalf("notification hooks = %#v", got.Hooks["notification"])
+	}
+	want := map[string]string{
+		"permission_prompt":  "--event approval-required",
+		"elicitation_dialog": "--event attention-required",
+		"agent_idle":         "personal-notifier",
+	}
+	for _, entry := range got.Hooks["notification"] {
+		matcher := fmt.Sprint(entry["matcher"])
+		commandPart, ok := want[matcher]
+		if !ok || !strings.Contains(fmt.Sprint(entry["bash"]), commandPart) {
+			t.Fatalf("notification hook %q = %#v, want command containing %q", matcher, entry, commandPart)
+		}
+		delete(want, matcher)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing migrated notification hooks: %#v", want)
 	}
 }
 

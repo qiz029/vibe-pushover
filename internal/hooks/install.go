@@ -30,7 +30,7 @@ var agentCatalog = []AgentInfo{
 	{Name: "codebuddy", DisplayName: "CodeBuddy Code", Capabilities: "completion+approval+attention", Resource: "hooks (beta)"},
 	{Name: "codewhale", DisplayName: "CodeWhale (DeepSeek-TUI)", Capabilities: "completion+attention", Resource: "hooks"},
 	{Name: "codex", DisplayName: "Codex CLI", Capabilities: "completion+approval", Resource: "hooks"},
-	{Name: "copilot", DisplayName: "GitHub Copilot CLI", Capabilities: "completion+attention", Resource: "hooks"},
+	{Name: "copilot", DisplayName: "GitHub Copilot CLI", Capabilities: "completion+approval+attention", Resource: "hooks"},
 	{Name: "craft", DisplayName: "Craft Agents", Capabilities: "completion+approval+attention", Resource: "automations"},
 	{Name: "cortex", DisplayName: "Snowflake Cortex Code", Capabilities: "completion+approval", Resource: "hooks (preview)"},
 	{Name: "cursor", DisplayName: "Cursor", Capabilities: "completion only", Resource: "hooks"},

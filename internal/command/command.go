@@ -1221,16 +1221,17 @@ func applyConfiguredSound(message notification.Message, event notification.Event
 func sendWithCredentials(ctx context.Context, options Options, credentials config.Credentials, message notification.Message) error {
 	client := pushover.NewClient(options.HTTPClient, options.Endpoint)
 	return client.Send(ctx, pushover.Message{
-		AppToken: credentials.AppToken,
-		UserKey:  credentials.UserKey,
-		Device:   credentials.Device,
-		Title:    message.Title,
-		Body:     message.Body,
-		URL:      message.URL,
-		URLTitle: message.URLTitle,
-		Priority: message.Priority,
-		Sound:    message.Sound,
-		TTL:      message.TTL,
+		AppToken:  credentials.AppToken,
+		UserKey:   credentials.UserKey,
+		Device:    credentials.Device,
+		Title:     message.Title,
+		Body:      message.Body,
+		URL:       message.URL,
+		URLTitle:  message.URLTitle,
+		Timestamp: message.Timestamp,
+		Priority:  message.Priority,
+		Sound:     message.Sound,
+		TTL:       message.TTL,
 	})
 }
 
@@ -1264,7 +1265,7 @@ func notificationFingerprint(agent string, event notification.Event, destination
 	identity := map[string]any{
 		"agent": agent, "event": event, "destination": destination,
 		"title": message.Title, "body": message.Body, "url": message.URL, "url_title": message.URLTitle,
-		"priority": message.Priority, "sound": message.Sound, "ttl": message.TTL,
+		"timestamp": message.Timestamp, "priority": message.Priority, "sound": message.Sound, "ttl": message.TTL,
 	}
 	for _, key := range []string{"session_id", "sessionId", "turn_id", "turnId", "tool_call_id", "toolCallId", "approval_id", "approvalId"} {
 		if value := fingerprintScalar(payload[key]); value != "" {
