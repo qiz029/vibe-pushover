@@ -39,6 +39,7 @@ func DetectedAgents() ([]AgentInfo, error) {
 		"cursor":      {filepath.Join(home, ".cursor")},
 		"droid":       {filepath.Join(home, ".factory")},
 		"dotcraft":    {filepath.Join(home, ".craft")},
+		"gajae":       {filepath.Join(home, ".gjc")},
 		"gemini":      {filepath.Join(home, ".gemini", "settings.json")},
 		"goose":       {filepath.Join(configHome, "goose"), filepath.Join(home, ".local", "share", "goose")},
 		"grok":        {filepath.Join(home, ".grok")},
@@ -140,6 +141,8 @@ func overrideDetectionMarkers(agent string, resolvedPaths []string) ([]string, e
 		}
 	case "kilo":
 		levels = 2
+	case "gajae":
+		levels = 1
 	case "mimo":
 		// MiMo uses LOCALAPPDATA on Windows and XDG_CONFIG_HOME elsewhere.
 		levels = 2

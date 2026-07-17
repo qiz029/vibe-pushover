@@ -34,6 +34,7 @@ var agentCatalog = []AgentInfo{
 	{Name: "cursor", DisplayName: "Cursor", Capabilities: "completion only", Resource: "hooks"},
 	{Name: "droid", DisplayName: "Factory Droid", Capabilities: "completion+attention", Resource: "hooks"},
 	{Name: "dotcraft", DisplayName: "DotCraft", Capabilities: "completion+approval+stop-hook-attention", Resource: "hooks"},
+	{Name: "gajae", DisplayName: "Gajae Code", Capabilities: "completion only", Resource: "config"},
 	{Name: "gemini", DisplayName: "Gemini CLI", Capabilities: "completion only", Resource: "hooks"},
 	{Name: "goose", DisplayName: "Goose", Capabilities: "completion only", Resource: "plugin"},
 	{Name: "grok", DisplayName: "Grok Build", Capabilities: "completion+attention", Resource: "hooks"},
@@ -236,6 +237,22 @@ func DefaultPath(agent string) (string, error) {
 		return filepath.Join(home, ".factory", "settings.json"), nil
 	case "dotcraft":
 		return filepath.Join(home, ".craft", "hooks.json"), nil
+	case "gajae":
+		if agentDir := strings.TrimSpace(os.Getenv("GJC_CODING_AGENT_DIR")); agentDir != "" {
+			agentDir, err = expandHome(agentDir)
+			if err != nil {
+				return "", fmt.Errorf("resolve Gajae Code agent directory: %w", err)
+			}
+			return filepath.Join(agentDir, "config.yml"), nil
+		}
+		if configDir := strings.TrimSpace(os.Getenv("GJC_CONFIG_DIR")); configDir != "" {
+			configDir, err = expandHome(configDir)
+			if err != nil {
+				return "", fmt.Errorf("resolve Gajae Code config directory: %w", err)
+			}
+			return filepath.Join(configDir, "agent", "config.yml"), nil
+		}
+		return filepath.Join(home, ".gjc", "agent", "config.yml"), nil
 	case "gemini":
 		return filepath.Join(home, ".gemini", "settings.json"), nil
 	case "goose":
@@ -389,6 +406,9 @@ func Install(agent, path, executable, pushoverConfig string) (bool, error) {
 	}
 	if agent == "goose" {
 		return installGoosePlugin(path, executable, pushoverConfig)
+	}
+	if agent == "gajae" {
+		return installGajaeConfig(path, executable, pushoverConfig)
 	}
 	if agent == "hermes" {
 		return installHermesHooks(path, executable, pushoverConfig)

@@ -108,6 +108,10 @@ func Build(agent string, event Event, payload map[string]any) (Message, error) {
 	}
 }
 
+func ProjectName(payload map[string]any) string {
+	return projectName(payloadWorkingDirectory(payload))
+}
+
 func withSupplementaryAction(message Message, event Event, payload map[string]any) Message {
 	rawURL := supplementaryURL(payload)
 	if rawURL == "" {
@@ -144,7 +148,7 @@ func completionDetail(agent string, payload map[string]any) string {
 			return detail
 		}
 	}
-	if detail := completionLine(firstString(payload, "last_assistant_message", "prompt_response", "assistant_response", "message", "reason")); detail != "" {
+	if detail := completionLine(firstString(payload, "last_assistant_message", "lastAssistantMessage", "prompt_response", "assistant_response", "message", "reason")); detail != "" {
 		return detail
 	}
 	if agent == "hermes" {
@@ -255,6 +259,7 @@ func displayName(value string) string {
 		"codewhale":     "CodeWhale",
 		"cortex":        "Cortex Code",
 		"dotcraft":      "DotCraft",
+		"gajae":         "Gajae Code",
 		"grok":          "Grok Build",
 		"kilo":          "Kilo Code",
 		"mimo":          "MiMo Code",

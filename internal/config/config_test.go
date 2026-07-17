@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ func TestSaveAndLoadCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Load() = %#v, want %#v", got, want)
 	}
 
@@ -53,7 +54,7 @@ func TestSaveAndLoadNotificationProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Load() = %#v, want %#v", got, want)
 	}
 }
@@ -74,7 +75,7 @@ func TestSaveAndLoadTargetDevices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Load() = %#v, want %#v", got, want)
 	}
 }
@@ -194,6 +195,47 @@ func TestQuietHoursUseLocalDailyWindows(t *testing.T) {
 	} {
 		if err := invalid.Validate(); err == nil {
 			t.Fatalf("Validate() accepted invalid quiet hours: %#v", invalid)
+		}
+	}
+}
+
+func TestSilenceRulesMatchAgentProjectAndEvent(t *testing.T) {
+	t.Parallel()
+
+	credentials := config.Credentials{
+		AppToken: "app", UserKey: "user",
+		SilenceRules: []config.SilenceRule{{
+			Agent: " Codex ", Project: " Private-Repo ", Event: "turn-complete",
+		}},
+	}
+	if !credentials.IsSilenced("codex", "turn-complete", "private-repo") {
+		t.Fatal("IsSilenced() = false for a case-insensitive matching agent and project")
+	}
+	if credentials.IsSilenced("codex", "approval-required", "private-repo") {
+		t.Fatal("IsSilenced() suppressed an approval outside the rule event")
+	}
+	if credentials.IsSilenced("codex", "turn-complete", "another-repo") {
+		t.Fatal("IsSilenced() matched only one half of a conjunctive rule")
+	}
+
+	credentials.SilenceRules = []config.SilenceRule{{Project: "private-repo", Event: "all"}}
+	if !credentials.IsSilenced("gajae", "attention-required", "private-repo") {
+		t.Fatal("IsSilenced() = false for an all-events project rule")
+	}
+}
+
+func TestRejectsInvalidSilenceRules(t *testing.T) {
+	t.Parallel()
+
+	for _, rule := range []config.SilenceRule{
+		{Event: "turn-complete"},
+		{Agent: "codex", Event: "finished"},
+	} {
+		credentials := config.Credentials{
+			AppToken: "app", UserKey: "user", SilenceRules: []config.SilenceRule{rule},
+		}
+		if err := credentials.Validate(); err == nil {
+			t.Fatalf("Validate() accepted invalid silence rule %#v", rule)
 		}
 	}
 }

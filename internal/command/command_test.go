@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -42,7 +43,7 @@ func TestSetupCommandInteractivelyStoresCredentials(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 	want := config.Credentials{AppToken: "app-token", UserKey: "user-key"}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("credentials = %#v, want %#v", got, want)
 	}
 	if strings.Contains(stdout.String(), "app-token") || strings.Contains(stdout.String(), "user-key") {
@@ -1373,6 +1374,31 @@ func TestPreviewCommandShowsUrgentProfileCompletionIsSuppressed(t *testing.T) {
 	}
 }
 
+func TestPreviewCommandExplainsMatchingSilenceRule(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key",
+		SilenceRules: []config.SilenceRule{{Agent: "codex", Project: "demo", Event: "turn-complete"}},
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	stdout := &bytes.Buffer{}
+	app := command.New(command.Options{
+		Stdin:  bytes.NewBufferString(`{"cwd":"/tmp/demo","last_assistant_message":"Done."}`),
+		Stdout: stdout, Stderr: &bytes.Buffer{},
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "preview", "--agent", "codex", "--event", "turn-complete", "--config", path,
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "Delivery: suppressed by a matching silence rule" {
+		t.Fatalf("preview output = %q", got)
+	}
+}
+
 func TestPreviewUsesProcessDirectoryWhenHookPayloadHasNoWorkspace(t *testing.T) {
 	t.Parallel()
 
@@ -1782,6 +1808,129 @@ func TestQuietHoursSuppressCompletionsButKeepBlockerNotifications(t *testing.T) 
 	}
 }
 
+func TestSilenceRulesSuppressMatchingCompletionsButKeepOtherNotifications(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	requests := 0
+	stdout := &bytes.Buffer{}
+	stdin := &bytes.Buffer{}
+	app := command.New(command.Options{
+		Stdin: stdin, Stdout: stdout, Stderr: &bytes.Buffer{}, DedupePath: filepath.Join(dir, "dedupe.json"),
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			requests++
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"status":1}`)), Header: make(http.Header)}, nil
+		})},
+		Endpoint: "https://pushover.test/messages.json",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "silence", "add", "--config", path, "--agent", "codex", "--project", "demo",
+	}); err != nil {
+		t.Fatalf("silence add Run() error = %v", err)
+	}
+
+	stdin.WriteString(`{"cwd":"/tmp/demo","last_assistant_message":"Done."}`)
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--config", path, "--agent", "codex", "--event", "turn-complete",
+	}); err != nil {
+		t.Fatalf("matching completion Run() error = %v", err)
+	}
+	stdin.WriteString(`{"cwd":"/tmp/demo","message":"Approve command."}`)
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--config", path, "--agent", "codex", "--event", "approval-required",
+	}); err != nil {
+		t.Fatalf("matching approval Run() error = %v", err)
+	}
+	stdin.WriteString(`{"cwd":"/tmp/other","last_assistant_message":"Done elsewhere."}`)
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--config", path, "--agent", "codex", "--event", "turn-complete",
+	}); err != nil {
+		t.Fatalf("other project completion Run() error = %v", err)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want approval plus non-matching completion", requests)
+	}
+	if !strings.Contains(stdout.String(), "Silence rule 1 added") {
+		t.Fatalf("silence output = %q", stdout.String())
+	}
+}
+
+func TestSilenceCommandListsRemovesAndClearsRules(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{
+		AppToken: "app-token", UserKey: "user-key",
+		SilenceRules: []config.SilenceRule{
+			{Agent: "codex", Event: "turn-complete"},
+			{Project: "private-repo", Event: "all"},
+		},
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	stdout := &bytes.Buffer{}
+	app := command.New(command.Options{Stdin: &bytes.Buffer{}, Stdout: stdout, Stderr: &bytes.Buffer{}})
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "silence", "--config", path}); err != nil {
+		t.Fatalf("list Run() error = %v", err)
+	}
+	for _, want := range []string{"1: event=turn-complete agent=codex project=*", "2: event=all agent=* project=private-repo"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("list output does not contain %q: %q", want, stdout.String())
+		}
+	}
+	stdout.Reset()
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "silence", "remove", "--config", path, "1"}); err != nil {
+		t.Fatalf("remove Run() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(got.SilenceRules) != 1 || got.SilenceRules[0].Project != "private-repo" {
+		t.Fatalf("rules after remove = %#v", got.SilenceRules)
+	}
+	stdout.Reset()
+	if err := app.Run(context.Background(), []string{"vibe-pushover", "silence", "clear", "--config", path}); err != nil {
+		t.Fatalf("clear Run() error = %v", err)
+	}
+	got, err = config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() after clear error = %v", err)
+	}
+	if len(got.SilenceRules) != 0 || !strings.Contains(stdout.String(), "All silence rules cleared") {
+		t.Fatalf("rules/output after clear = %#v / %q", got.SilenceRules, stdout.String())
+	}
+}
+
+func TestSilenceAddIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	stdout := &bytes.Buffer{}
+	app := command.New(command.Options{Stdin: &bytes.Buffer{}, Stdout: stdout, Stderr: &bytes.Buffer{}})
+	args := []string{"vibe-pushover", "silence", "add", "--config", path, "--agent", "Codex", "--project", "Demo"}
+	if err := app.Run(context.Background(), args); err != nil {
+		t.Fatalf("first Run() error = %v", err)
+	}
+	if err := app.Run(context.Background(), args); err != nil {
+		t.Fatalf("second Run() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(got.SilenceRules) != 1 || !strings.Contains(stdout.String(), "already exists") {
+		t.Fatalf("rules/output = %#v / %q", got.SilenceRules, stdout.String())
+	}
+}
+
 func TestTestCommandReportsQuietHoursSuppressionAndSupportsForce(t *testing.T) {
 	t.Parallel()
 
@@ -1971,6 +2120,35 @@ func TestNotifyCommandAcceptsLegacySkipActiveStopFlag(t *testing.T) {
 	}
 	if requests != 1 {
 		t.Fatalf("requests = %d, want 1", requests)
+	}
+}
+
+func TestNotifyCommandReadsPayloadFromEnvironment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Credentials{AppToken: "app-token", UserKey: "user-key"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	t.Setenv("GJC_NOTIFICATION_JSON", `{"cwd":"/tmp/gajae-demo","lastAssistantMessage":"All Gajae tests pass."}`)
+	var title, body string
+	app := command.New(command.Options{
+		Stdin: &bytes.Buffer{}, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if err := r.ParseForm(); err != nil {
+				t.Fatalf("ParseForm() error = %v", err)
+			}
+			title, body = r.Form.Get("title"), r.Form.Get("message")
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"status":1}`)), Header: make(http.Header)}, nil
+		})},
+		Endpoint: "https://pushover.test/messages.json",
+	})
+	if err := app.Run(context.Background(), []string{
+		"vibe-pushover", "notify", "--config", path, "--agent", "gajae", "--event", "turn-complete",
+		"--payload-env", "GJC_NOTIFICATION_JSON",
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if title != "✓ Gajae Code finished · gajae-demo" || body != "All Gajae tests pass." {
+		t.Fatalf("title/body = %q / %q", title, body)
 	}
 }
 

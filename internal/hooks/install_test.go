@@ -57,6 +57,7 @@ func TestDetectedAgentsFindsEverySupportedConfigHome(t *testing.T) {
 		".cursor",
 		".factory",
 		".craft",
+		".gjc",
 		".gemini",
 		filepath.Join(".config", "goose"),
 		".grok",
@@ -142,6 +143,7 @@ func TestDetectedAgentsHonorsSupportedConfigOverrides(t *testing.T) {
 		"COPILOT_HOME":          filepath.Join(overrideRoot, "copilot"),
 		"GEMINI_CLI_HOME":       filepath.Join(overrideRoot, "gemini"),
 		"GROK_HOME":             filepath.Join(overrideRoot, "grok"),
+		"GJC_CODING_AGENT_DIR":  filepath.Join(overrideRoot, "gajae"),
 		"HERMES_HOME":           filepath.Join(overrideRoot, "hermes"),
 		"KIMI_CODE_HOME":        filepath.Join(overrideRoot, "kimi"),
 		"MIMOCODE_HOME":         filepath.Join(overrideRoot, "mimo"),
@@ -172,7 +174,7 @@ func TestDetectedAgentsHonorsSupportedConfigOverrides(t *testing.T) {
 	for _, agent := range detected {
 		names[agent.Name] = true
 	}
-	for _, want := range []string{"cline", "codewhale", "copilot", "gemini", "grok", "hermes", "kimi", "mimo", "mistral", "vscode"} {
+	for _, want := range []string{"cline", "codewhale", "copilot", "gajae", "gemini", "grok", "hermes", "kimi", "mimo", "mistral", "vscode"} {
 		if !names[want] {
 			t.Errorf("DetectedAgents() omitted %q with its supported override: %#v", want, detected)
 		}
@@ -252,6 +254,7 @@ func TestDefaultPathsForAdditionalAgents(t *testing.T) {
 		"cortex":      filepath.Join(home, ".snowflake", "cortex", "hooks.json"),
 		"droid":       filepath.Join(home, ".factory", "settings.json"),
 		"dotcraft":    filepath.Join(home, ".craft", "hooks.json"),
+		"gajae":       filepath.Join(home, ".gjc", "agent", "config.yml"),
 		"gemini":      filepath.Join(home, "gemini-home", ".gemini", "settings.json"),
 		"goose":       filepath.Join(home, ".agents", "plugins", "vibe-pushover"),
 		"hermes":      filepath.Join(home, ".hermes", "config.yaml"),
@@ -1631,6 +1634,78 @@ func TestInstallCreatesGooseOpenPlugin(t *testing.T) {
 	}
 	if changed {
 		t.Fatal("second Install() changed Goose plugin")
+	}
+}
+
+func TestInstallAddsGajaeCompletionCommand(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".gjc", "agent", "config.yml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	original := "# keep this comment\ntheme: dark\ncompletion:\n  notify: on\n"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	changed, err := hooks.Install("gajae", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("Install() changed = false, want true")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var got struct {
+		Theme      string `yaml:"theme"`
+		Completion struct {
+			Notify        string `yaml:"notify"`
+			NotifyCommand string `yaml:"notifyCommand"`
+		} `yaml:"completion"`
+	}
+	if err := yaml.Unmarshal(data, &got); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+	for _, want := range []string{
+		"notify --agent gajae --event turn-complete --ignore-errors",
+		"--payload-env GJC_NOTIFICATION_JSON",
+		"--config '/tmp/pushover.json'",
+	} {
+		if !strings.Contains(got.Completion.NotifyCommand, want) {
+			t.Fatalf("notifyCommand does not contain %q: %q", want, got.Completion.NotifyCommand)
+		}
+	}
+	if got.Theme != "dark" || got.Completion.Notify != "on" || !bytes.Contains(data, []byte("# keep this comment")) {
+		t.Fatalf("unrelated Gajae config changed: %#v\n%s", got, data)
+	}
+	changed, err = hooks.Install("gajae", path, "/opt/bin/vibe-pushover", "/tmp/pushover.json")
+	if err != nil {
+		t.Fatalf("second Install() error = %v", err)
+	}
+	if changed {
+		t.Fatal("second Install() changed Gajae config")
+	}
+}
+
+func TestInstallGajaeRefusesToReplaceCustomCompletionCommand(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(path, []byte("completion:\n  notifyCommand: personal-notifier\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := hooks.Install("gajae", path, "/opt/bin/vibe-pushover", ""); err == nil || !strings.Contains(err.Error(), "refusing to replace") {
+		t.Fatalf("Install() error = %v, want ownership refusal", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(data) != "completion:\n  notifyCommand: personal-notifier\n" {
+		t.Fatalf("custom Gajae command changed: %q", data)
 	}
 }
 

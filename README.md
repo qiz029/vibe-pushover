@@ -5,7 +5,7 @@
 - finishes a turn;
 - needs manual approval or otherwise needs your attention.
 
-The CLI currently integrates with 36 coding agents: Aider, Amp, Antigravity CLI, Augment Auggie, Claude Code, Cline, CodeBuddy Code, CodeWhale (formerly DeepSeek-TUI), Codex CLI, GitHub Copilot CLI, Snowflake Cortex Code, Cursor, Factory Droid, DotCraft, Gemini CLI, Goose, Grok Build, Hermes Agent, Kimi Code CLI, Kiro, Kilo Code, MiMo Code, Mistral Vibe, Oh My Pi, OpenHands CLI, OpenCode, Pi, Qoder, Qwen Code, Rovo Dev CLI, Tabnine CLI, TRAE, VS Code Agent, Windsurf, WorkBuddy, and ZCode. It is written in Go and uses [`urfave/cli`](https://github.com/urfave/cli).
+The CLI currently integrates with 37 coding agents: Aider, Amp, Antigravity CLI, Augment Auggie, Claude Code, Cline, CodeBuddy Code, CodeWhale (formerly DeepSeek-TUI), Codex CLI, GitHub Copilot CLI, Snowflake Cortex Code, Cursor, Factory Droid, DotCraft, Gajae Code, Gemini CLI, Goose, Grok Build, Hermes Agent, Kimi Code CLI, Kiro, Kilo Code, MiMo Code, Mistral Vibe, Oh My Pi, OpenHands CLI, OpenCode, Pi, Qoder, Qwen Code, Rovo Dev CLI, Tabnine CLI, TRAE, VS Code Agent, Windsurf, WorkBuddy, and ZCode. It is written in Go and uses [`urfave/cli`](https://github.com/urfave/cli).
 
 ## Install
 
@@ -18,8 +18,8 @@ curl -fsSL https://github.com/qiz029/vibe-pushover/releases/latest/download/inst
 By default the installer writes to `~/.local/bin`. Override it with `VIBE_PUSHOVER_INSTALL_DIR`, or pin a release with `VIBE_PUSHOVER_VERSION`:
 
 ```sh
-curl -fsSL https://github.com/qiz029/vibe-pushover/releases/download/v0.15.0/install.sh | \
-  VIBE_PUSHOVER_VERSION=v0.15.0 VIBE_PUSHOVER_INSTALL_DIR="$HOME/bin" sh
+curl -fsSL https://github.com/qiz029/vibe-pushover/releases/download/v0.16.0/install.sh | \
+  VIBE_PUSHOVER_VERSION=v0.16.0 VIBE_PUSHOVER_INSTALL_DIR="$HOME/bin" sh
 ```
 
 `VIBE_PUSHOVER_DOWNLOAD_BASE_URL` can point the installer at a trusted mirror; when set, `VIBE_PUSHOVER_VERSION` is also required.
@@ -54,7 +54,7 @@ Saved Pushover credentials to ...
 
 Both credential values are hidden when setup runs in a terminal. `configure` remains available as an alias for `setup`.
 
-The default follows Go's user config directory: `~/Library/Application Support/vibe-pushover/config.json` on macOS, and `$XDG_CONFIG_HOME/vibe-pushover/config.json` (usually `~/.config/vibe-pushover/config.json`) on Linux. The containing directory and config file are created with `0700` and `0600` permissions. Use `--config PATH` on `setup`, `profile`, `device`, `snooze`, `focus`, `quiet-hours`, `install`, `test`, or `notify` to override it.
+The default follows Go's user config directory: `~/Library/Application Support/vibe-pushover/config.json` on macOS, and `$XDG_CONFIG_HOME/vibe-pushover/config.json` (usually `~/.config/vibe-pushover/config.json`) on Linux. The containing directory and config file are created with `0700` and `0600` permissions. Use `--config PATH` on `setup`, `profile`, `device`, `snooze`, `focus`, `quiet-hours`, `silence`, `install`, `test`, or `notify` to override it.
 
 Send a real test notification:
 
@@ -63,7 +63,7 @@ vibe-pushover test
 vibe-pushover test --event turn-complete --message "Completion style looks good."
 ```
 
-The default test simulates an approval request so its high-priority sound, expiry, configured device target, and Pushover application icon can be checked end to end. Use `--event turn-complete` or `--event attention-required` to exercise the other styles. Tests honor the configured profile, snooze state, focus mode, and quiet hours, so suppressed delivery is reported instead of sending a misleading notification. Add `--force` when you deliberately want to test a suppressed delivery.
+The default test simulates an approval request so its high-priority sound, expiry, configured device target, and Pushover application icon can be checked end to end. Use `--event turn-complete` or `--event attention-required` to exercise the other styles. Tests honor the configured profile, snooze state, focus mode, quiet hours, and silence rules, so suppressed delivery is reported instead of sending a misleading notification. Add `--force` when you deliberately want to test a suppressed delivery.
 
 The notification profile can be viewed or changed later without re-entering the Pushover credentials:
 
@@ -110,6 +110,20 @@ vibe-pushover quiet-hours off         # disable the schedule
 
 Quiet hours recur in the machine's current local timezone and suppress only `turn-complete`; approval and attention notifications remain active. Start is inclusive and end is exclusive.
 
+Permanently silence routine notifications from an exact agent, project directory name, or both:
+
+```sh
+vibe-pushover silence add --agent codex
+vibe-pushover silence add --project private-repo
+vibe-pushover silence add --agent gajae --project demo
+vibe-pushover silence add --project private-repo --event all
+vibe-pushover silence
+vibe-pushover silence remove 1
+vibe-pushover silence clear
+```
+
+New rules default to `turn-complete`, so approval and attention alerts keep working. Use `--event all` only when every event for the match should be silent. When both `--agent` and `--project` are present, both must match; agent and project matching is case-insensitive.
+
 Choose a distinct Pushover sound for each event without reinstalling any agent hooks:
 
 ```sh
@@ -138,6 +152,7 @@ vibe-pushover install --agent codebuddy
 vibe-pushover install --agent codewhale
 vibe-pushover install --agent codex
 vibe-pushover install --agent dotcraft
+vibe-pushover install --agent gajae
 vibe-pushover install --agent gemini
 vibe-pushover install --agent grok
 vibe-pushover install --agent kilo
@@ -173,6 +188,7 @@ vibe-pushover install --agent zcode
 | Cursor | completion | `~/.cursor/hooks.json` |
 | Factory Droid | completion, attention | `~/.factory/settings.json` |
 | DotCraft | completion, approval, Stop-hook failure attention | `~/.craft/hooks.json` |
+| Gajae Code | completion | `$GJC_CODING_AGENT_DIR/config.yml`, `$GJC_CONFIG_DIR/agent/config.yml`, or `~/.gjc/agent/config.yml` |
 | Gemini CLI | completion | `$GEMINI_CLI_HOME/.gemini/settings.json` or `~/.gemini/settings.json` |
 | Goose | completion | `~/.agents/plugins/vibe-pushover/` |
 | Grok Build | completion, failure attention | `$GROK_HOME/hooks/vibe-pushover.json` or `~/.grok/hooks/vibe-pushover.json` |
@@ -196,9 +212,9 @@ vibe-pushover install --agent zcode
 | WorkBuddy | completion, approval, failure attention | `~/.workbuddy/settings.json` |
 | ZCode | completion, approval | `~/.zcode/cli/config.json` |
 
-The integrations follow each agent's native hook, plugin, or notification-command mechanism. They preserve existing settings, only replace entries owned by `vibe-pushover`, and repeated installs are idempotent. Copilot's attention event is limited to permission and elicitation dialogs. Droid's attention event can also mean the agent has been idle and is waiting for input. Amp reports its `awaiting-approval` state separately from turn errors. Grok Build maps its top-level `Stop` event to completion and `StopFailure` to attention; its separate `SubagentStop` event is deliberately not installed, so child completions stay quiet. Kilo Code, MiMo Code, and OpenCode use compatible `session.idle`, `permission.asked`, and `session.error` plugin events for completion, approval, and error attention; child-session completion and error events stay quiet. Each installs into its own config tree and does not share a plugin file. Qwen sends separate approval notifications and idle-input attention notifications; re-entered active `Stop` hooks are filtered to avoid duplicate or premature completion messages. TRAE maps its top-level `Stop` hook to completion and only its `Notification` events matched as `permission_prompt` to approval; installation preserves unrelated and third-party hooks in the same global manifest. Qoder applies the same active-Stop filter. Hermes sends approval notifications only for human-facing CLI or gateway decisions and skips `approvals.mode=smart` automatic decisions. Oh My Pi ignores `agent_end` events that announce an automatic continuation and reports its native tool-approval event separately. When session logging is enabled, Mistral Vibe filters inherited subagent `post_agent_turn` events using their official `agents/<session>/messages.jsonl` layout; with logging disabled, its payload does not identify subagents, so fan-out can produce extra completion notifications. Aider, Auggie, Cline, Cursor, Gemini, Goose, Kiro, Mistral Vibe, OpenHands CLI, Pi, Qoder, VS Code Agent, and Windsurf currently expose completion notifications only through the installed integration.
+The integrations follow each agent's native hook, plugin, or notification-command mechanism. They preserve existing settings, only replace entries owned by `vibe-pushover`, and repeated installs are idempotent. Copilot's attention event is limited to permission and elicitation dialogs. Droid's attention event can also mean the agent has been idle and is waiting for input. Amp reports its `awaiting-approval` state separately from turn errors. Grok Build maps its top-level `Stop` event to completion and `StopFailure` to attention; its separate `SubagentStop` event is deliberately not installed, so child completions stay quiet. Kilo Code, MiMo Code, and OpenCode use compatible `session.idle`, `permission.asked`, and `session.error` plugin events for completion, approval, and error attention; child-session completion and error events stay quiet. Each installs into its own config tree and does not share a plugin file. Qwen sends separate approval notifications and idle-input attention notifications; re-entered active `Stop` hooks are filtered to avoid duplicate or premature completion messages. TRAE maps its top-level `Stop` hook to completion and only its `Notification` events matched as `permission_prompt` to approval; installation preserves unrelated and third-party hooks in the same global manifest. Qoder applies the same active-Stop filter. Hermes sends approval notifications only for human-facing CLI or gateway decisions and skips `approvals.mode=smart` automatic decisions. Oh My Pi ignores `agent_end` events that announce an automatic continuation and reports its native tool-approval event separately. When session logging is enabled, Mistral Vibe filters inherited subagent `post_agent_turn` events using their official `agents/<session>/messages.jsonl` layout; with logging disabled, its payload does not identify subagents, so fan-out can produce extra completion notifications. Aider, Auggie, Cline, Cursor, Gajae Code, Gemini, Goose, Kiro, Mistral Vibe, OpenHands CLI, Pi, Qoder, VS Code Agent, and Windsurf currently expose completion notifications only through the installed integration.
 
-Because Aider supports only one `notifications-command`, installation refuses to replace an existing custom command. Remove or compose that command yourself before retrying if you want `vibe-pushover` to own the setting. Cline also supports one file per event in a hook root; installation refuses to replace a non-`vibe-pushover` `TaskComplete` hook.
+Because Aider supports only one `notifications-command`, installation refuses to replace an existing custom command. Gajae Code similarly supports one `completion.notifyCommand`; its installer also refuses to replace an unrelated command. Remove or compose the existing command yourself before retrying if you want `vibe-pushover` to own the setting. Cline supports one file per event in a hook root and likewise refuses to replace a non-`vibe-pushover` `TaskComplete` hook.
 
 Use `--agent-config PATH` to target another agent settings file or `--binary PATH` when installing a binary that is not the currently running executable. If credentials were written with `setup --config PATH`, pass the same path to `install --config PATH`; it will be embedded in both installed hook commands.
 
@@ -222,7 +238,9 @@ Pi deliberately has no built-in permission popups, so its integration currently 
 
 Cline installs its stable `TaskComplete` hook into the operating system's real Documents directory. At the standard `~/Documents` location that one hook is discovered by both the IDE and current CLI/SDK runtime, avoiding duplicate execution. If Windows My Documents or Linux XDG Documents is redirected elsewhere, installation also writes the CLI copy under `~/.cline/hooks`; both paths are ownership-checked before either is changed. It extracts the compact result from either the IDE's `taskComplete.taskMetadata.result` or the newer CLI/SDK `turn.outputText` payload, and ignores child-agent completions identified by `parent_agent_id`. Cline exposes pre-tool hooks but no dedicated event proving that a tool is blocked waiting for manual approval, so `vibe-pushover` deliberately reports completion only instead of producing false approval alerts. Use `--agent-config PATH` with the full `TaskComplete` hook file path when intentionally targeting a custom Cline hooks directory.
 
-Roo Code, Continue, Crush, Zed Agent, Junie, GitLab Duo CLI, and Gajae Code have been audited but are not listed as supported because they do not currently expose a stable, installed user-level turn-complete or approval hook suitable for this integration. Roo Code emits task events through its programmatic extension/IPC API, but enabling that API requires process-level setup instead of a normal user hook configuration. Continue's current CLI source contains a hook schema and loader, but its lifecycle firing helpers are not wired into the chat flow. Crush's preliminary hook API currently exposes only `PreToolUse`; its built-in desktop notifications are not an external lifecycle hook. Zed's current task hook is limited to worktree creation, Junie's public notification request remains open, and GitLab Duo's external hook experiment currently exposes only `SessionStart` even though Duo has built-in system notifications. Gajae Code exposes notification transports rather than a per-user lifecycle hook file. Warp already provides its own desktop notifications for completed agents and agents that need attention, but does not expose a corresponding external lifecycle hook. `vibe-pushover` intentionally avoids log polling for these tools because it would be fragile and could leak conversation content.
+Gajae Code uses its official `completion.notifyCommand` setting. The installed command reads only the bounded JSON payload supplied in `GJC_NOTIFICATION_JSON`, preserves unrelated YAML settings and comments, and runs for normal completed turns; Gajae excludes aborted and error stops from this notification surface. The setting does not provide an approval event, so this integration reports completion only and does not install a long-running SDK client.
+
+Roo Code, Continue, Crush, Zed Agent, Junie, and GitLab Duo CLI have been audited but are not listed as supported because they do not currently expose a stable, installed user-level turn-complete or approval hook suitable for this integration. Roo Code emits task events through its programmatic extension/IPC API, but enabling that API requires process-level setup instead of a normal user hook configuration. Continue's current CLI source contains a hook schema and loader, but its lifecycle firing helpers are not wired into the chat flow. Crush's preliminary hook API currently exposes only `PreToolUse`; its built-in desktop notifications are not an external lifecycle hook. Zed's current task hook is limited to worktree creation, Junie's public notification request remains open, and GitLab Duo's external hook experiment currently exposes only `SessionStart` even though Duo has built-in system notifications. Warp already provides its own desktop notifications for completed agents and agents that need attention, but does not expose a corresponding external lifecycle hook. `vibe-pushover` intentionally avoids log polling for these tools because it would be fragile and could leak conversation content.
 
 Installed hooks use `--ignore-errors`: a network or Pushover failure is written to the agent's stderr but does not fail the agent turn.
 
@@ -251,7 +269,7 @@ printf '%s' '{"cwd":"/tmp/demo","last_assistant_message":"All tests pass."}' | \
   vibe-pushover preview --agent codex --event turn-complete --profile watch
 ```
 
-Preview automatically uses the default config from `setup` when it exists, including its profile and event-specific sound, but still works without credentials when no config exists. Pass `--config PATH` for a custom config; an explicit `--profile` still takes precedence.
+Preview automatically uses the default config from `setup` when it exists, including its profile, event-specific sound, and silence rules, but still works without credentials when no config exists. Pass `--config PATH` for a custom config; an explicit `--profile` still takes precedence.
 
 ## Notification format, profiles, and icon
 
@@ -265,7 +283,7 @@ Notifications are intentionally compact for phones and watches:
 
 Hook delivery also suppresses exact repeats for three seconds across CLI processes. The fingerprint includes the agent, event, a non-secret hash of the Pushover destination, rendered notification fields, and stable session/turn/tool IDs when available. A failed Pushover request releases its reservation so a later hook can retry; an unavailable or corrupt dedupe cache fails open and sends the notification with a warning. The private cache is stored at `~/Library/Caches/vibe-pushover/dedupe.json` on macOS or `$XDG_CACHE_HOME/vibe-pushover/dedupe.json` on Linux.
 
-`snooze` temporarily suppresses all hook delivery. `focus` is the safer interruption-control mode: it suppresses only completion notifications while approval and attention alerts continue. `quiet-hours` applies that blocker-only behavior on a recurring local-time schedule, including windows that cross midnight. Temporary modes store only their expiry timestamp beside the existing local configuration and resume automatically after the deadline; `vibe-pushover test --force` remains available for an intentional end-to-end check.
+`snooze` temporarily suppresses all hook delivery. `focus` is the safer interruption-control mode: it suppresses only completion notifications while approval and attention alerts continue. `quiet-hours` applies that blocker-only behavior on a recurring local-time schedule, including windows that cross midnight. `silence` adds exact per-agent or per-project rules; its safe default suppresses completions only, while `--event all` can suppress blockers too. Temporary modes store only their expiry timestamp beside the existing local configuration and resume automatically after the deadline; `vibe-pushover test --force` remains available for an intentional end-to-end check.
 
 Profiles control how noticeable those messages are:
 

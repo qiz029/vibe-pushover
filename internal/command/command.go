@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -50,6 +51,7 @@ func New(options Options) *cli.Command {
 			snoozeCommand(options),
 			focusCommand(options),
 			quietHoursCommand(options),
+			silenceCommand(options),
 			deviceCommand(options),
 			soundCommand(options),
 			agentsCommand(options),
@@ -59,6 +61,130 @@ func New(options Options) *cli.Command {
 			testCommand(options),
 		},
 	}
+}
+
+func silenceCommand(options Options) *cli.Command {
+	return &cli.Command{
+		Name:  "silence",
+		Usage: "silence notifications matching agent and project rules",
+		Flags: []cli.Flag{configFlag()},
+		Action: func(_ context.Context, cmd *cli.Command) error {
+			path, err := configPath(cmd.String("config"))
+			if err != nil {
+				return err
+			}
+			credentials, err := config.Load(path)
+			if err != nil {
+				return err
+			}
+			if len(credentials.SilenceRules) == 0 {
+				_, err = fmt.Fprintln(options.Stdout, "No silence rules configured")
+				return err
+			}
+			for index, rule := range credentials.SilenceRules {
+				if _, err := fmt.Fprintf(options.Stdout, "%d: event=%s agent=%s project=%s\n",
+					index+1, rule.Event, ruleValue(rule.Agent), ruleValue(rule.Project)); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+		Commands: []*cli.Command{{
+			Name:  "add",
+			Usage: "add a silence rule; completion notifications are the safe default",
+			Flags: []cli.Flag{
+				&cli.StringFlag{Name: "agent", Usage: "match this agent name"},
+				&cli.StringFlag{Name: "project", Usage: "match this project directory name"},
+				&cli.StringFlag{Name: "event", Usage: "turn-complete, approval-required, attention-required, or all", Value: "turn-complete"},
+				configFlag(),
+			},
+			Action: func(_ context.Context, cmd *cli.Command) error {
+				path, err := configPath(cmd.String("config"))
+				if err != nil {
+					return err
+				}
+				credentials, err := config.Load(path)
+				if err != nil {
+					return err
+				}
+				rule := config.SilenceRule{
+					Agent: strings.ToLower(strings.TrimSpace(cmd.String("agent"))), Project: strings.TrimSpace(cmd.String("project")),
+					Event: strings.ToLower(strings.TrimSpace(cmd.String("event"))),
+				}
+				for index, existing := range credentials.SilenceRules {
+					if strings.EqualFold(existing.Agent, rule.Agent) && strings.EqualFold(existing.Project, rule.Project) && existing.Event == rule.Event {
+						_, err = fmt.Fprintf(options.Stdout, "Silence rule %d already exists\n", index+1)
+						return err
+					}
+				}
+				credentials.SilenceRules = append(credentials.SilenceRules, rule)
+				if err := config.Save(path, credentials); err != nil {
+					return err
+				}
+				_, err = fmt.Fprintf(options.Stdout, "Silence rule %d added: event=%s agent=%s project=%s\n",
+					len(credentials.SilenceRules), rule.Event, ruleValue(rule.Agent), ruleValue(rule.Project))
+				return err
+			},
+		}, {
+			Name:      "remove",
+			Usage:     "remove a silence rule by its listed number",
+			ArgsUsage: "INDEX",
+			Flags:     []cli.Flag{configFlag()},
+			Action: func(_ context.Context, cmd *cli.Command) error {
+				if cmd.Args().Len() != 1 {
+					return errors.New("silence remove requires one rule number")
+				}
+				index, err := strconv.Atoi(strings.TrimSpace(cmd.Args().First()))
+				if err != nil || index < 1 {
+					return errors.New("silence rule number must be a positive integer")
+				}
+				path, err := configPath(cmd.String("config"))
+				if err != nil {
+					return err
+				}
+				credentials, err := config.Load(path)
+				if err != nil {
+					return err
+				}
+				if index > len(credentials.SilenceRules) {
+					return fmt.Errorf("silence rule %d does not exist", index)
+				}
+				credentials.SilenceRules = append(credentials.SilenceRules[:index-1], credentials.SilenceRules[index:]...)
+				if err := config.Save(path, credentials); err != nil {
+					return err
+				}
+				_, err = fmt.Fprintf(options.Stdout, "Silence rule %d removed\n", index)
+				return err
+			},
+		}, {
+			Name:  "clear",
+			Usage: "remove every silence rule",
+			Flags: []cli.Flag{configFlag()},
+			Action: func(_ context.Context, cmd *cli.Command) error {
+				path, err := configPath(cmd.String("config"))
+				if err != nil {
+					return err
+				}
+				credentials, err := config.Load(path)
+				if err != nil {
+					return err
+				}
+				credentials.SilenceRules = nil
+				if err := config.Save(path, credentials); err != nil {
+					return err
+				}
+				_, err = fmt.Fprintln(options.Stdout, "All silence rules cleared")
+				return err
+			},
+		}},
+	}
+}
+
+func ruleValue(value string) string {
+	if value == "" {
+		return "*"
+	}
+	return value
 }
 
 func snoozeCommand(options Options) *cli.Command {
@@ -466,6 +592,10 @@ func previewCommand(options Options) *cli.Command {
 			} else if explicitConfig || !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
+			if configured && credentials.IsSilenced(cmd.String("agent"), string(event), notification.ProjectName(payload)) {
+				_, err = fmt.Fprintln(options.Stdout, "Delivery: suppressed by a matching silence rule")
+				return err
+			}
 			if !notification.ShouldDeliver(event, profile) {
 				_, err = fmt.Fprintf(options.Stdout, "Delivery: suppressed by %s profile\n", profile)
 				return err
@@ -652,6 +782,7 @@ func notifyCommand(options Options) *cli.Command {
 			&cli.StringFlag{Name: "event", Usage: "turn-complete, approval-required, or attention-required", Required: true},
 			&cli.BoolFlag{Name: "ignore-errors", Usage: "log delivery failures without failing the hook"},
 			&cli.BoolFlag{Name: "no-input", Hidden: true},
+			&cli.StringFlag{Name: "payload-env", Hidden: true},
 			&cli.BoolFlag{Name: "skip-active-stop", Hidden: true},
 			&cli.BoolFlag{Name: "skip-non-completion", Hidden: true},
 			&cli.BoolFlag{Name: "skip-active-qwen-stop", Hidden: true},
@@ -666,7 +797,20 @@ func notifyCommand(options Options) *cli.Command {
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			var payload map[string]any
 			var err error
-			if cmd.Bool("no-input") {
+			payloadEnv := strings.TrimSpace(cmd.String("payload-env"))
+			if cmd.Bool("no-input") && payloadEnv != "" {
+				return errors.New("--no-input and --payload-env cannot be used together")
+			}
+			if payloadEnv != "" {
+				value, ok := os.LookupEnv(payloadEnv)
+				if !ok {
+					return fmt.Errorf("payload environment variable %s is not set", payloadEnv)
+				}
+				payload, err = readPayload(strings.NewReader(value))
+				if err != nil {
+					return fmt.Errorf("read payload from %s: %w", payloadEnv, err)
+				}
+			} else if cmd.Bool("no-input") {
 				payload = map[string]any{}
 				if cwd, cwdErr := os.Getwd(); cwdErr == nil {
 					payload["cwd"] = cwd
@@ -746,6 +890,8 @@ func notifyCommand(options Options) *cli.Command {
 					credentials, loadErr := config.Load(path)
 					if loadErr != nil {
 						err = loadErr
+					} else if credentials.IsSilenced(cmd.String("agent"), string(event), notification.ProjectName(payload)) {
+						return nil
 					} else if credentials.IsSnoozed(options.Now()) {
 						return nil
 					} else if event == notification.EventTurnComplete && (credentials.IsFocused(options.Now()) || credentials.IsQuietHours(options.Now())) {

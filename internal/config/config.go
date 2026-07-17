@@ -11,17 +11,24 @@ import (
 )
 
 type Credentials struct {
-	AppToken            string `json:"app_token"`
-	UserKey             string `json:"user_key"`
-	Device              string `json:"device,omitempty"`
-	NotificationProfile string `json:"notification_profile,omitempty"`
-	SnoozedUntil        string `json:"snoozed_until,omitempty"`
-	FocusUntil          string `json:"focus_until,omitempty"`
-	QuietHoursStart     string `json:"quiet_hours_start,omitempty"`
-	QuietHoursEnd       string `json:"quiet_hours_end,omitempty"`
-	TurnCompleteSound   string `json:"turn_complete_sound,omitempty"`
-	ApprovalSound       string `json:"approval_required_sound,omitempty"`
-	AttentionSound      string `json:"attention_required_sound,omitempty"`
+	AppToken            string        `json:"app_token"`
+	UserKey             string        `json:"user_key"`
+	Device              string        `json:"device,omitempty"`
+	NotificationProfile string        `json:"notification_profile,omitempty"`
+	SnoozedUntil        string        `json:"snoozed_until,omitempty"`
+	FocusUntil          string        `json:"focus_until,omitempty"`
+	QuietHoursStart     string        `json:"quiet_hours_start,omitempty"`
+	QuietHoursEnd       string        `json:"quiet_hours_end,omitempty"`
+	TurnCompleteSound   string        `json:"turn_complete_sound,omitempty"`
+	ApprovalSound       string        `json:"approval_required_sound,omitempty"`
+	AttentionSound      string        `json:"attention_required_sound,omitempty"`
+	SilenceRules        []SilenceRule `json:"silence_rules,omitempty"`
+}
+
+type SilenceRule struct {
+	Agent   string `json:"agent,omitempty"`
+	Project string `json:"project,omitempty"`
+	Event   string `json:"event"`
 }
 
 func DefaultPath() (string, error) {
@@ -140,7 +147,39 @@ func (c Credentials) Validate() error {
 			return fmt.Errorf("%s must be default or a 1-64 character Pushover sound name using letters, numbers, underscore, or hyphen, got %q", preference.field, preference.sound)
 		}
 	}
+	for index, rule := range c.SilenceRules {
+		if strings.TrimSpace(rule.Agent) == "" && strings.TrimSpace(rule.Project) == "" {
+			return fmt.Errorf("silence_rules[%d] must match an agent or project", index)
+		}
+		switch rule.Event {
+		case "all", "turn-complete", "approval-required", "attention-required":
+		default:
+			return fmt.Errorf("silence_rules[%d].event must be all, turn-complete, approval-required, or attention-required", index)
+		}
+	}
 	return nil
+}
+
+func (c Credentials) IsSilenced(agent, event, project string) bool {
+	agent = strings.TrimSpace(agent)
+	event = strings.TrimSpace(event)
+	project = strings.TrimSpace(project)
+	for _, rule := range c.SilenceRules {
+		ruleEvent := strings.TrimSpace(rule.Event)
+		ruleAgent := strings.TrimSpace(rule.Agent)
+		ruleProject := strings.TrimSpace(rule.Project)
+		if ruleEvent != "all" && ruleEvent != event {
+			continue
+		}
+		if ruleAgent != "" && !strings.EqualFold(ruleAgent, agent) {
+			continue
+		}
+		if ruleProject != "" && !strings.EqualFold(ruleProject, project) {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func (c Credentials) IsSnoozed(now time.Time) bool {
